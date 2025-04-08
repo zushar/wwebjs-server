@@ -1,5 +1,5 @@
 //whatsapp-test.controller.ts
-import { Body, Controller, Logger, Post } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Post } from '@nestjs/common';
 import { WwebjsServices } from './wwebjs.services';
 import { ConnectService } from './connect.service';
 
@@ -29,7 +29,11 @@ export class WhatsAppTestController {
     private readonly wwebjsServices: WwebjsServices,
     private readonly connectService: ConnectService,
   ) {}
-
+  @Get('test')
+  async test(): Promise<string> {
+    this.logger.log('Test endpoint hit');
+    return 'Test endpoint is working';
+  }
   @Post('create-code')
   async createVerificationCode(
     @Body() dto: CreateConnectionDto,
