@@ -4,7 +4,7 @@ name: Deploy NestJS to DigitalOcean with Redis
 on:
   push:
     branches:
-      - main # Or your primary deployment branch
+      - master # Or your primary deployment branch
 
 jobs:
   deploy:
