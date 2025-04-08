@@ -50,6 +50,9 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
+            # Source NVM to make node and pm2 available in PATH
+            source /root/.nvm/nvm.sh
+
             # Navigate to the application directory
             cd ${{ secrets.TARGET_DIR }}
 
@@ -76,7 +79,8 @@ jobs:
 
             # --- Restart the NestJS application ---
             echo "Restarting application with PM2..."
-            # Point to dist/main.js now
-            /root/.nvm/versions/node/v22.14.0/bin/pm2 reload ${{ secrets.PM2_APP_NAME }} || /root/.nvm/versions/node/v22.14.0/bin/pm2 start dist/main.js --name ${{ secrets.PM2_APP_NAME }} --interpreter /root/.nvm/versions/node/v22.14.0/bin/node
+            # Try using simple pm2 command now that NVM is sourced
+            # Use $(which node) to dynamically find the interpreter path
+            pm2 reload ${{ secrets.PM2_APP_NAME }} || pm2 start dist/main.js --name ${{ secrets.PM2_APP_NAME }} --interpreter $(which node)
 
             echo "Deployment successful!"
