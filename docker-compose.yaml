@@ -1,17 +1,17 @@
-# docker-compose.yaml
+  # docker-compose.yaml
 
-version: '3.8' # מומלץ להשתמש בגרסה עדכנית של Compose
+  version: '3.8' # מומלץ להשתמש בגרסה עדכנית של Compose
 
-services:
-  redis:
-    image: redis:latest # השתמש באימג' הרשמי של Redis (אפשר לציין גרסה ספציפית, למשל redis:7)
-    container_name: redis-wwebjs # שם ייחודי לקונטיינר
-    ports:
-      - "6379:6379" # מיפוי פורט 6379 מהמחשב המארח לקונטיינר
-    volumes:
-      - redis_data:/data # מיפוי Volume בשם redis_data לתיקיית הנתונים של Redis בתוך הקונטיינר
-    restart: always # הגדרה שהקונטיינר יופעל מחדש אוטומטית במקרה של נפילה או הפעלה מחדש של Docker
+  services:
+    redis:
+      image: redis:latest # השתמש באימג' הרשמי של Redis (אפשר לציין גרסה ספציפית, למשל redis:7)
+      container_name: redis-wwebjs # שם ייחודי לקונטיינר
+      ports:
+        - "6379:6379" # מיפוי פורט 6379 מהמחשב המארח לקונטיינר
+      volumes:
+        - redis_data:/data # מיפוי Volume בשם redis_data לתיקיית הנתונים של Redis בתוך הקונטיינר
+      restart: always # הגדרה שהקונטיינר יופעל מחדש אוטומטית במקרה של נפילה או הפעלה מחדש של Docker
 
-volumes:
-  redis_data: # הגדרת ה-Volume בשם redis_data שישמש לשמירת הנתונים
-    driver: local # שימוש בדרייבר ברירת המחדל לשמירה מקומית
+  volumes:
+    redis_data: # הגדרת ה-Volume בשם redis_data שישמש לשמירת הנתונים
+      driver: local # שימוש בדרייבר ברירת המחדל לשמירה מקומית

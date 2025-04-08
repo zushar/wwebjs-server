@@ -1,0 +1,91 @@
+name: Deploy NestJS to DigitalOcean with Redis
+
+# Run this workflow every time a push happens to the main branch
+on:
+  push:
+    branches:
+      - main # Or your primary deployment branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest # Use the latest Ubuntu runner
+
+    steps:
+      # 1. Checkout the repository code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Set up Node.js environment
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20' # <-- IMPORTANT: Replace with your project's Node.js version
+
+      # 3. Install dependencies
+      - name: Install Dependencies
+        run: npm ci
+
+      # 4. Build the NestJS project
+      - name: Build Project
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      # 5. Copy built files AND docker-compose.yaml to DigitalOcean Droplet
+      - name: Copy files via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          source: "dist/,node_modules/,package.json,package-lock.json,docker-compose.yaml" # <-- ADDED docker-compose.yaml
+          target: ${{ secrets.TARGET_DIR }}
+          strip_components: 1 # Adjust if needed
+
+      # 6. Execute deployment commands on the Droplet via SSH
+      - name: Execute deployment commands
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            # Navigate to the application directory
+            cd ${{ secrets.TARGET_DIR }}
+
+            # --- Ensure Docker & Docker Compose are runnable (Optional Check) ---
+            # Better to ensure they are installed during server setup
+            if ! command -v docker &> /dev/null || ! docker compose version &> /dev/null; then
+                echo "Docker or Docker Compose not found/runnable. Please install/configure them on the server."
+                exit 1
+            fi
+
+            # --- Start/Update Redis using Docker Compose ---
+            echo "Starting/Updating Redis container via Docker Compose..."
+            # Runs 'docker compose up' in detached mode using the specific yaml file
+            # --remove-orphans cleans up containers for services removed from the compose file
+            docker compose -f docker-compose.yaml up -d --remove-orphans
+
+            # --- Install/Update Application Dependencies ---
+            # Option A: If you DID NOT copy node_modules in SCP step
+            # echo "Installing production dependencies..."
+            # npm ci --only=production --ignore-scripts
+
+            # Option B: If you DID copy node_modules (current setup), skip npm ci
+
+            # --- Optional: Run database migrations ---
+            # echo "Running database migrations..."
+            # npm run typeorm:migration:run
+
+            # --- Restart the NestJS application ---
+            # (Assumes NestJS runs directly on the host, connecting to Redis via localhost:6379)
+            echo "Restarting application with PM2..."
+            pm2 reload ${{ secrets.PM2_APP_NAME }} || pm2 start dist/main.js --name ${{ secrets.PM2_APP_NAME }}
+
+            # OR --- Restart using systemd ---
+            # echo "Restarting application with systemd..."
+            # sudo systemctl restart your-nestjs-app.service
+
+            echo "Deployment successful!"
