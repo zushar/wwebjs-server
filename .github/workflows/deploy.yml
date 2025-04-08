@@ -15,23 +15,24 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Set up Node.js environment
+      # 2. Set up Node.js environment (for the build step in the runner)
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20' # <-- IMPORTANT: Replace with your project's Node.js version
+          # IMPORTANT: Replace with your project's Node.js version if different
+          node-version: '22.14.0'
 
-      # 3. Install dependencies
+      # 3. Install dependencies (in the runner)
       - name: Install Dependencies
         run: npm ci
 
-      # 4. Build the NestJS project
+      # 4. Build the NestJS project (in the runner)
       - name: Build Project
         run: npm run build
         env:
           NODE_ENV: production
 
-      # 5. Copy built files AND docker-compose.yaml to DigitalOcean Droplet
+      # 5. Copy files to DigitalOcean Droplet via SCP
       - name: Copy files via SCP
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -39,9 +40,10 @@ jobs:
           username: ${{ secrets.DROPLET_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
-          source: "dist/,node_modules/,package.json,package-lock.json,docker-compose.yaml" # <-- ADDED docker-compose.yaml
+          # Corrected source list (no trailing slashes on dirs)
+          source: "dist,node_modules,package.json,package-lock.json,docker-compose.yaml"
           target: ${{ secrets.TARGET_DIR }}
-          strip_components: 1 # Adjust if needed
+          strip_components: 1 # Adjust if your source structure requires it
 
       # 6. Execute deployment commands on the Droplet via SSH
       - name: Execute deployment commands
@@ -54,9 +56,13 @@ jobs:
           script: |
             # Navigate to the application directory
             cd ${{ secrets.TARGET_DIR }}
+
+            # List files in the target directory (for debugging)
+            echo "--- Listing files in target directory ---"
             ls -la
+            echo "-----------------------------------------"
+
             # --- Ensure Docker & Docker Compose are runnable (Optional Check) ---
-            # Better to ensure they are installed during server setup
             if ! command -v docker &> /dev/null || ! docker compose version &> /dev/null; then
                 echo "Docker or Docker Compose not found/runnable. Please install/configure them on the server."
                 exit 1
@@ -81,10 +87,13 @@ jobs:
 
             # --- Restart the NestJS application ---
             echo "Restarting application with PM2..."
-            /root/.nvm/versions/node/v22.14.0/bin/pm2 reload ${{ secrets.PM2_APP_NAME }} || /root/.nvm/versions/node/v22.14.0/bin/pm2 start dist/main.js --name ${{ secrets.PM2_APP_NAME }}
+            # Use full paths for pm2 and node interpreter
+            # !! IMPORTANT: Verify this node path with `which node` on your server !!
+            /root/.nvm/versions/node/v22.14.0/bin/pm2 reload ${{ secrets.PM2_APP_NAME }} || /root/.nvm/versions/node/v22.14.0/bin/pm2 start dist/main.js --name ${{ secrets.PM2_APP_NAME }} --interpreter /root/.nvm/versions/node/v22.14.0/bin/node
 
             # OR --- Restart using systemd ---
             # echo "Restarting application with systemd..."
             # sudo systemctl restart your-nestjs-app.service
 
             echo "Deployment successful!"
+
