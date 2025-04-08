@@ -53,6 +53,7 @@ jobs:
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
             # Navigate to the application directory
+            ls -la
             cd ${{ secrets.TARGET_DIR }}
 
             # --- Ensure Docker & Docker Compose are runnable (Optional Check) ---
