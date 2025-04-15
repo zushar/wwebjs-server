@@ -1,11 +1,9 @@
-// client-factory.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { Client, ClientOptions, LocalAuth } from 'whatsapp-web.js';
 
 @Injectable()
 export class ClientFactoryService {
   private readonly logger = new Logger(ClientFactoryService.name);
-  public clintNumber: string;
 
   /**
    * Creates a new WhatsApp Web.js client with consistent configuration
@@ -14,13 +12,12 @@ export class ClientFactoryService {
    */
   createClient(phoneNumber: string): Client {
     this.logger.debug(`Creating WhatsApp client for: ${phoneNumber}`);
-    this.clintNumber = phoneNumber;
     const defaultOptions: ClientOptions = {
       authStrategy: new LocalAuth({
         clientId: phoneNumber,
       }),
       puppeteer: {
-        headless: true,
+        headless: true, // Set to false for debugging if needed
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
@@ -32,6 +29,7 @@ export class ClientFactoryService {
           '--single-process',
           '--disable-features=site-per-process',
           '--window-size=1920,1080',
+          '--js-flags="--max-old-space-size=128"', // Limit JS heap to 128MB per Chromium
         ],
       },
     };
