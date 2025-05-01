@@ -1,16 +1,15 @@
 // wwebjs.services.ts
 import {
-  Injectable,
-  Logger,
   ForbiddenException,
-  InternalServerErrorException,
   Inject,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
-import { ConnectService } from './connect.service';
-import { Chat, Client } from 'whatsapp-web.js';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from 'src/redis/redis.module';
-import { ClientMeta } from './client-meta.type';
+import { Chat, Client } from 'whatsapp-web.js';
+import { ConnectService } from './connect.service';
 
 @Injectable()
 export class WwebjsServices {
@@ -18,78 +17,77 @@ export class WwebjsServices {
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redisClient: Redis,
-    private readonly connectService: ConnectService) {}
+    private readonly connectService: ConnectService,
+  ) {}
 
   /**
- * Retrieves a verified client from memory or Redis.
- * If the client is not verified, it throws a ForbiddenException.
- * If the client is not found in memory, it attempts to restore it from Redis.
- */
-private async getVerifiedClient(clientId: string): Promise<Client> {
-  let clientState:
-    | { client: Client; ready: boolean; verified: boolean }
-    | undefined = undefined;
+   * Retrieves a verified client from memory or Redis.
+   * If the client is not verified, it throws a ForbiddenException.
+   * If the client is not found in memory, it attempts to restore it from Redis.
+   */
+  private async getVerifiedClient(clientId: string): Promise<Client> {
+    let clientState:
+      | { client: Client; ready: boolean; verified: boolean }
+      | undefined = undefined;
 
-  try {
-    clientState = this.connectService.getClient(clientId);
-  } catch (e) {
-    this.logger.warn(
-      `Client ${clientId} not found in memory. Attempting to restore from Redis...`,
-    );
-  }
+    try {
+      clientState = this.connectService.getClient(clientId);
+    } catch (e) {
+      this.logger.warn(
+        `Client ${clientId} not found in memory. Attempting to restore from Redis...`,
+      );
+    }
 
-  if (!clientState) {
-    // Not in memory, try to restore from Redis
-    const isVerified = await this.connectService.isClientVerified(clientId);
-    if (!isVerified) {
-      const errorMsg = `Client for clientId ${clientId} is not verified in Redis. Please complete the pairing process.`;
-      this.logger.error(errorMsg);
-      throw new ForbiddenException(errorMsg);
-    }
-    this.logger.log(`Re-initializing client ${clientId} from Redis...`);
-    const redisClientMeta = await this.connectService.getClientMeta(clientId);
-    if (!redisClientMeta) {
-      const errorMsg = `Client ${clientId} not found in Redis.`;
-      this.logger.error(errorMsg);
-      throw new ForbiddenException(errorMsg);
-    }
-    // Re-initialize the client (this should add it to memory)
-    await this.connectService.createVerificationCode(
-      clientId,
-      redisClientMeta.type,
-      redisClientMeta.verified,
-    );
-    // Wait for the client to be ready in memory
-    let retries = 10;
-    while (retries-- > 0) {
-      try {
-        clientState = this.connectService.getClient(clientId);
-        if (clientState && clientState.ready && clientState.verified) {
-          break;
-        }
-      } catch (e) {
-        // Not ready yet
+    if (!clientState) {
+      // Not in memory, try to restore from Redis
+      const isVerified = await this.connectService.isClientVerified(clientId);
+      if (!isVerified) {
+        const errorMsg = `Client for clientId ${clientId} is not verified in Redis. Please complete the pairing process.`;
+        this.logger.error(errorMsg);
+        throw new ForbiddenException(errorMsg);
       }
-      await new Promise((res) => setTimeout(res, 1000)); // Wait 1 second
+      this.logger.log(`Re-initializing client ${clientId} from Redis...`);
+      const redisClientMeta = await this.connectService.getClientMeta(clientId);
+      if (!redisClientMeta) {
+        const errorMsg = `Client ${clientId} not found in Redis.`;
+        this.logger.error(errorMsg);
+        throw new ForbiddenException(errorMsg);
+      }
+      // Re-initialize the client (this should add it to memory)
+      await this.connectService.createVerificationCode(
+        clientId,
+        redisClientMeta.type,
+        redisClientMeta.verified,
+      );
+      // Wait for the client to be ready in memory
+      let retries = 10;
+      while (retries-- > 0) {
+        try {
+          clientState = this.connectService.getClient(clientId);
+          if (clientState && clientState.ready && clientState.verified) {
+            break;
+          }
+        } catch (e) {
+          // Not ready yet
+        }
+        await new Promise((res) => setTimeout(res, 1000)); // Wait 1 second
+      }
+      if (!clientState || !clientState.ready || !clientState.verified) {
+        const errorMsg = `Failed to re-initialize client for clientId ${clientId} from Redis.`;
+        this.logger.error(errorMsg);
+        throw new ForbiddenException(errorMsg);
+      }
+    } else {
+      // If in memory, check verification
+      if (!clientState.verified) {
+        const errorMsg = `Client for clientId ${clientId} has not completed the verification step.`;
+        this.logger.error(errorMsg);
+        throw new ForbiddenException(errorMsg);
+      }
     }
-    if (!clientState || !clientState.ready || !clientState.verified) {
-      const errorMsg = `Failed to re-initialize client for clientId ${clientId} from Redis.`;
-      this.logger.error(errorMsg);
-      throw new ForbiddenException(errorMsg);
-    }
-  } else {
-    // If in memory, check verification
-    if (!clientState.verified) {
-      const errorMsg = `Client for clientId ${clientId} has not completed the verification step.`;
-      this.logger.error(errorMsg);
-      throw new ForbiddenException(errorMsg);
-    }
+
+    return clientState.client;
   }
-
-  return clientState.client;
-}
-
-  
 
   /**
    * Sends a message using the specified WhatsApp client.
@@ -126,10 +124,12 @@ private async getVerifiedClient(clientId: string): Promise<Client> {
   /**
    * Gets all group chats for the specified client.
    */
-  async getAllGroups(clientId: string): Promise<{ groups: { id: string; name: string }[] }> {
+  async getAllGroups(
+    clientId: string,
+  ): Promise<{ groups: { id: string; name: string }[] }> {
     this.logger.log(`Fetching all groups for clientId: ${clientId}`);
     const client = await this.getVerifiedClient(clientId);
-  
+
     try {
       const allChats = await client.getChats();
       const groups = allChats
@@ -143,10 +143,7 @@ private async getVerifiedClient(clientId: string): Promise<Client> {
       );
       return { groups };
     } catch (error) {
-      this.logger.error(
-        `Error fetching groups for ${clientId}:`,
-        error,
-      );
+      this.logger.error(`Error fetching groups for ${clientId}:`, error);
       throw new InternalServerErrorException(
         `Failed to fetch groups: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -156,10 +153,12 @@ private async getVerifiedClient(clientId: string): Promise<Client> {
   /**
    * Gets all archived group chats for the specified client.
    */
-  async getAllGroupsInArchive(clientId: string): Promise<{ archivedGroups: { id: string; name: string }[] }> {
+  async getAllGroupsInArchive(
+    clientId: string,
+  ): Promise<{ archivedGroups: { id: string; name: string }[] }> {
     this.logger.log(`Fetching archived groups for clientId: ${clientId}`);
     const client = await this.getVerifiedClient(clientId);
-  
+
     try {
       const allChats = await client.getChats();
       const archivedGroups = allChats
@@ -186,7 +185,9 @@ private async getVerifiedClient(clientId: string): Promise<Client> {
   /**
    * Deletes all messages from all archived groups.
    */
-  async deleteAllMessagesFromArchivedGroups(clientId: string): Promise<{ deletedFromGroups: string[] }> {
+  async deleteAllMessagesFromArchivedGroups(
+    clientId: string,
+  ): Promise<{ deletedFromGroups: string[] }> {
     this.logger.log(
       `Deleting all messages from archived groups for clientId: ${clientId}`,
     );

@@ -1,4 +1,4 @@
-import { Client } from "whatsapp-web.js";
+import { Client } from 'whatsapp-web.js';
 
 export type ClientType = 'delete-only' | 'full';
 

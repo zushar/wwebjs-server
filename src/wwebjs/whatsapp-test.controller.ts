@@ -113,14 +113,16 @@ export class WhatsAppTestController {
   }
 
   @Get('groups')
-async getGroups(@Query() query: GetGroupsDto): Promise<{ groups: { id: string; name: string }[] }> {
-  this.logger.log(`Getting groups for clientId: ${query.clientId}`);
-  if (!query.clientId) {
-    this.logger.error('clientId is required');
-    throw new BadRequestException('clientId is required');
+  async getGroups(
+    @Query() query: GetGroupsDto,
+  ): Promise<{ groups: { id: string; name: string }[] }> {
+    this.logger.log(`Getting groups for clientId: ${query.clientId}`);
+    if (!query.clientId) {
+      this.logger.error('clientId is required');
+      throw new BadRequestException('clientId is required');
+    }
+    return await this.wwebjsServices.getAllGroups(query.clientId);
   }
-  return await this.wwebjsServices.getAllGroups(query.clientId);
-}
 
   @Get('groups/archived')
   async getArchivedGroups(
