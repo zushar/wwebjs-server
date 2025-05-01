@@ -1,0 +1,86 @@
+name: Deploy NestJS to DigitalOcean with Redis
+
+on:
+  push:
+    branches:
+      - master # Or your primary deployment branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Set up Node.js
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0' # Match your server's NVM version
+
+      # 3. Install dependencies
+      - name: Install Dependencies
+        run: npm ci
+
+      # 4. Build Project
+      - name: Build Project
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      # 5. Copy files via SCP (No strip_components)
+      - name: Copy files via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          source: "dist,node_modules,package.json,package-lock.json,docker-compose.yaml"
+          target: ${{ secrets.TARGET_DIR }}
+
+      # 6. Execute deployment commands
+      - name: Execute deployment commands
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            # Source NVM to make node and pm2 available in PATH
+            source /root/.nvm/nvm.sh
+
+            # Navigate to the application directory
+            cd ${{ secrets.TARGET_DIR }}
+
+            # List files in the target directory (for debugging)
+            echo "--- Listing files in target directory ---"
+            ls -la
+            echo "-----------------------------------------"
+
+            # --- Ensure Docker & Docker Compose are runnable (Optional Check) ---
+            if ! command -v docker &> /dev/null || ! docker compose version &> /dev/null; then
+                echo "Docker or Docker Compose not found/runnable. Please install/configure them on the server."
+                exit 1
+            fi
+
+            # --- Start/Update Redis using Docker Compose ---
+            echo "Starting/Updating Redis container via Docker Compose..."
+            docker compose -f docker-compose.yaml up -d --remove-orphans
+
+            # --- Install/Update Application Dependencies ---
+            # (Keep commented out if copying node_modules)
+
+            # --- Optional: Run database migrations ---
+            # (Keep commented out if not needed)
+
+            # --- Restart the NestJS application ---
+            echo "Restarting application with PM2..."
+            # Try using simple pm2 command now that NVM is sourced
+            # Use $(which node) to dynamically find the interpreter path
+            pm2 reload ${{ secrets.PM2_APP_NAME }} || pm2 start dist/main.js --name ${{ secrets.PM2_APP_NAME }} --interpreter $(which node)
+
+            echo "Deployment successful!"

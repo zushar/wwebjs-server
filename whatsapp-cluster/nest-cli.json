@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json.schemastore.org/nest-cli",
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "packages/shard/src",
+  "compilerOptions": {
+    "builder": "swc",
+    "typeCheck": true,
+    "deleteOutDir": true
+  },
+  "monorepo": true, 
+  "root": "packages/gateway/src", 
+  "projects": {
+    "gateway": { 
+      "type": "application",
+      "root": "packages/gateway",
+      "entryFile": "main",
+      "sourceRoot": "packages/gateway/src",
+      "compilerOptions": {
+        "tsConfigPath": "packages/gateway/tsconfig.build.json"
+      }
+    },
+    "shard": {
+      "type": "application",
+      "root": "packages/shard",
+      "entryFile": "main",
+      "sourceRoot": "packages/shard/src",
+      "compilerOptions": {
+        "tsConfigPath": "packages/shard/tsconfig.build.json"
+      }
+    }
+  }
+}
