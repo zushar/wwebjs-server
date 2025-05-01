@@ -1,4 +1,3 @@
-// whatsapp-cluster/tsconfig.base.json
 {
   "compilerOptions": {
     "module": "commonjs",
@@ -7,19 +6,18 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
-    "esModuleInterop": true, // Often useful
-    "target": "ES2021", // Or a newer target
+    "esModuleInterop": true,
+    "target": "ES2021",
     "sourceMap": true,
     "incremental": true,
     "skipLibCheck": true,
-    "strictNullChecks": false, // Match your original project or enable
-    "noImplicitAny": false,    // Match your original project or enable
-    "strictBindCallApply": false, // Match your original project or enable
-    "forceConsistentCasingInFileNames": false, // Match your original project or enable
-    "noFallthroughCasesInSwitch": false, // Match your original project or enable
-    "baseUrl": ".", // Optional: Good practice for monorepos
-    "paths": { // Optional: Define paths for shared libs if you create one
-      // "@whatsapp-cluster/shared-lib/*": ["packages/shared-lib/src/*"]
+    "strictNullChecks": false,
+    "noImplicitAny": false,
+    "strictBindCallApply": false,
+    "forceConsistentCasingInFileNames": false,
+    "noFallthroughCasesInSwitch": false,
+    "baseUrl": ".",
+    "paths": { 
     }
   }
 }

@@ -1,12 +1,12 @@
 // whatsapp-test.controller.ts
 import {
+  BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Logger,
   Post,
-  Delete,
-  BadRequestException,
   Query,
 } from '@nestjs/common';
 import { ClientType } from 'src/wwebjs/client-meta.type';
@@ -157,7 +157,7 @@ export class WhatsAppTestController {
     @Body() dto: DeleteGroupsDto,
   ): Promise<{ deletedFromGroups: string[]; invalidGroupIds: string[] }> {
     this.logger.log(
-      `Deleting messages from groups for clientId: ${dto.clientId}, groupIds: ${dto.groupIds}`,
+      `Deleting messages from groups for clientId: ${dto.clientId}, groupIds: ${JSON.stringify(dto.groupIds)}`,
     );
     if (!dto.clientId || !dto.groupIds || !Array.isArray(dto.groupIds)) {
       this.logger.error('clientId and groupIds are required');
@@ -174,7 +174,7 @@ export class WhatsAppTestController {
     @Body() dto: SendMessageToGroupsDto,
   ): Promise<{ sentToGroups: string[]; invalidGroupIds: string[] }> {
     this.logger.log(
-      `Sending message to groups for clientId: ${dto.clientId}, groupIds: ${dto.groupIds}`,
+      `Sending message to groups for clientId: ${dto.clientId}, groupIds: ${JSON.stringify(dto.groupIds)}`,
     );
     if (!dto.clientId || !dto.groupIds || !dto.message) {
       this.logger.error('clientId, groupIds, and message are required');
