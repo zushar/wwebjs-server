@@ -1,0 +1,144 @@
+// packages/proto/whatsapp_shard.proto
+syntax = "proto3";
+
+package wc; // Define a package name (e.g., whatsapp cluster)
+
+// The main service definition for interacting with a shard
+service ShardService {
+  // Initiates a connection for a phone number, potentially returning a pairing code
+  rpc Connect (ConnectRequest) returns (ConnectResponse);
+
+  // Finalizes the connection after QR/pairing code scan (optional, depends on client readiness detection)
+  rpc VerifyConnection (VerifyConnectionRequest) returns (VerifyConnectionResponse);
+
+  // Sends a direct message to a specific recipient
+  rpc SendMessage (SendMessageRequest) returns (SendMessageResponse);
+
+  // Retrieves all groups (non-archived) for a client
+  rpc GetAllGroups (GetAllGroupsRequest) returns (GetAllGroupsResponse);
+
+  // Retrieves all archived groups for a client
+  rpc GetAllArchivedGroups (GetAllGroupsRequest) returns (GetAllGroupsResponse); // Reuse GetGroups message types
+
+  // Deletes messages from specified groups
+  rpc DeleteMessagesFromGroups (DeleteMessagesFromGroupsRequest) returns (ActionConfirmationResponse);
+
+  // Deletes messages from all archived groups
+  rpc DeleteAllMessagesFromArchivedGroups (ClientIdRequest) returns (ActionConfirmationResponse);
+
+  // Sends a message to multiple specified groups
+  rpc SendMessageToGroups (SendMessageToGroupsRequest) returns (ActionConfirmationResponse);
+
+   // Destroys a client instance and cleans up resources
+  rpc Disconnect (DisconnectRequest) returns (DisconnectResponse);
+
+  // Health check endpoint for the shard
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// --- Message Definitions ---
+
+// Generic request containing just the client ID
+message ClientIdRequest {
+  string clientId = 1;
+}
+
+// Request to initiate a connection
+message ConnectRequest {
+  string phoneNumber = 1;
+  string clientType = 2; // 'full' or 'delete-only'
+}
+
+// Response for the Connect RPC
+message ConnectResponse {
+  string clientId = 1;
+  optional string pairingCode = 2; // Only present if pairing is needed
+  string message = 3;             // e.g., "Client is ready", "Pairing code required", "Already connected"
+  bool needsPairing = 4;
+}
+
+// Request to verify connection (potentially after user confirms pairing)
+message VerifyConnectionRequest {
+  string clientId = 1;
+}
+
+// Response for VerifyConnection RPC
+message VerifyConnectionResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Request to send a direct message
+message SendMessageRequest {
+  string clientId = 1;
+  string recipientId = 2; // e.g., "1234567890@c.us" or "123456-789@g.us"
+  string message = 3;
+}
+
+// Response for SendMessage RPC (could include message ID, timestamp, etc.)
+message SendMessageResponse {
+  bool success = 1;
+  string messageId = 2; // Example: ID of the sent message
+  string error = 3;     // Error message if success is false
+}
+
+// Structure for representing a group
+message GroupInfo {
+  string id = 1;   // e.g., "123456-789@g.us"
+  string name = 2;
+}
+
+// Request to get groups (used for both all and archived)
+message GetAllGroupsRequest {
+  string clientId = 1;
+}
+
+// Response containing a list of groups
+message GetAllGroupsResponse {
+  repeated GroupInfo groups = 1;
+}
+
+// Request to delete messages from specific groups
+message DeleteMessagesFromGroupsRequest {
+  string clientId = 1;
+  repeated string groupIds = 2;
+}
+
+// Request to send a message to specific groups
+message SendMessageToGroupsRequest {
+  string clientId = 1;
+  repeated string groupIds = 2;
+  string message = 3;
+}
+
+// Generic response confirming an action on multiple items
+message ActionConfirmationResponse {
+  repeated string successfulIds = 1; // IDs where action succeeded
+  repeated string failedIds = 2;     // IDs where action failed
+  string message = 3;                // Overall status message
+}
+
+// Request to disconnect a client
+message DisconnectRequest {
+  string clientId = 1;
+}
+
+// Response for disconnection
+message DisconnectResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Request for Health Check
+message HealthCheckRequest {}
+
+// Response for Health Check
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+    SERVICE_UNKNOWN = 3; // Used only by the Watcher
+  }
+  ServingStatus status = 1;
+}
