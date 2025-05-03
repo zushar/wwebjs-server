@@ -1,12 +1,23 @@
 {
   "name": "@whatsapp-cluster/shared-lib",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "Shared library for DTOs, interfaces, types, and utilities for the WhatsApp Cluster",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "private": true,
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rimraf dist",
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "class-validator": "^0.14.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
-  "description": ""
+  "license": "ISC"
 }

@@ -1,17 +1,85 @@
-  # docker-compose.yaml
+# This file is part of the wwebjs docker-compose setup.
+services:
+  redis:
+    image: redis:latest
+    container_name: redis-wwebjs
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
-  version: '3.8' # מומלץ להשתמש בגרסה עדכנית של Compose
+  browser-pool:
+    container_name: browser-pool-wwebjs
+    build:
+      context: ./packages/browser-pool
+    ports:
+      - "9222:9222"
+      - "9223:9223"  
+    shm_size: 3gb
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9222/json/version || curl -s http://localhost:9223/json/version || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 180s 
+    restart: always
 
-  services:
-    redis:
-      image: redis:latest # השתמש באימג' הרשמי של Redis (אפשר לציין גרסה ספציפית, למשל redis:7)
-      container_name: redis-wwebjs # שם ייחודי לקונטיינר
-      ports:
-        - "6379:6379" # מיפוי פורט 6379 מהמחשב המארח לקונטיינר
-      volumes:
-        - redis_data:/data # מיפוי Volume בשם redis_data לתיקיית הנתונים של Redis בתוך הקונטיינר
-      restart: always # הגדרה שהקונטיינר יופעל מחדש אוטומטית במקרה של נפילה או הפעלה מחדש של Docker
+  shard:
+    container_name: shard-wwebjs
+    build:
+      context: .                 
+      dockerfile: packages/shard/Dockerfile
+    environment:
+      - BROWSER_POOL_ENDPOINT=http://browser-pool:9223
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PROXIES=http://user1:pass1@proxy1.example.com:8080,http://user2:pass2@proxy2.example.com:8080
+    depends_on:
+      browser-pool:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo 'Waiting for browser-pool to be fully ready...' &&
+        until curl -s http://browser-pool:9223/json/version > /dev/null; do
+          echo 'Waiting for browser-pool...' &&
+          sleep 5;
+        done &&
+        echo 'Browser pool is ready!' &&
+        node /usr/src/app/packages/shard/dist/main.js
+      "
+    ports:
+      - "50051:50051"
+    volumes:
+      - ./whatsapp-sessions:/usr/src/app/sessions
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "50051"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    restart: always
+  gateway:
+    container_name: gateway-wwebjs
+    build:
+      context: .
+      dockerfile: ./packages/gateway/Dockerfile
+    environment:
+      - SHARD_ADDR=shard:50051
+      - GATEWAY_PORT=3000
+    depends_on:
+      shard:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    restart: always
 
-  volumes:
-    redis_data: # הגדרת ה-Volume בשם redis_data שישמש לשמירת הנתונים
-      driver: local # שימוש בדרייבר ברירת המחדל לשמירה מקומית
+volumes:
+  redis_data:
+    driver: local

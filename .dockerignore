@@ -1,0 +1,8 @@
+# .dockerignore
+node_modules
+packages/browser-pool/node_modules
+packages/shard/node_modules
+packages/gateway/node_modules
+.whatsapp-sessions
+.git
+*.log

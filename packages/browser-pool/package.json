@@ -1,0 +1,12 @@
+{
+  "name": "browser-pool",
+  "version": "1.0.0",
+  "description": "Runs a shared headless Chrome instance for WhatsApp Shards",
+  "private": true,
+  "scripts": {
+    "docker:build": "docker build -t whatsapp-browser-pool:latest .",
+    "docker:run": "docker run -p 9222:9222 --name browser-pool whatsapp-browser-pool:latest"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

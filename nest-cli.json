@@ -3,30 +3,47 @@
   "collection": "@nestjs/schematics",
   "sourceRoot": "packages/shard/src",
   "compilerOptions": {
-    "builder": "swc",
+    "builder": "tsc",
     "typeCheck": true,
     "deleteOutDir": true
   },
-  "monorepo": true, 
-  "root": "packages/gateway/src", 
+  "monorepo": true,
+  "root": "packages/gateway/src",
   "projects": {
-    "gateway": { 
+    "gateway": {                               
       "type": "application",
       "root": "packages/gateway",
       "entryFile": "main",
       "sourceRoot": "packages/gateway/src",
-      "compilerOptions": {
+      "compilerOptions": {                 
         "tsConfigPath": "packages/gateway/tsconfig.build.json"
-      }
-    },
-    "shard": {
+      },
+      "assets": [
+        { "include": "../../proto/*.proto", "outDir": "dist/proto" }
+      ],
+      "watchAssets": true                        
+    },                                           
+    "shard": {                                    
       "type": "application",
       "root": "packages/shard",
       "entryFile": "main",
       "sourceRoot": "packages/shard/src",
-      "compilerOptions": {
+      "compilerOptions": {                       
         "tsConfigPath": "packages/shard/tsconfig.build.json"
+      },
+      "assets": [                               
+        { "include": "../../proto/*.proto", "outDir": "dist/proto" }
+      ],
+      "watchAssets": true                         
+    },
+    "shared-lib": {
+      "type": "library",
+      "root": "packages/shared-lib",
+      "entryFile": "index",
+      "sourceRoot": "packages/shared-lib/src",
+      "compilerOptions": {
+        "tsConfigPath": "packages/shared-lib/tsconfig.build.json"
       }
-    }
+    }                                           
   }
 }

@@ -3,45 +3,69 @@ syntax = "proto3";
 
 package wc; // Define a package name (e.g., whatsapp cluster)
 
+// --- Common Message Definitions ---
+
+// Generic request containing just the client ID.
+// Used by VerifyConnection, GetAllGroups, GetAllArchivedGroups,
+// DeleteAllMessagesFromArchivedGroups, and Disconnect RPCs.
+message ClientIdRequest {
+  string clientId = 1;
+}
+
+// Structure for representing a group
+message GroupInfo {
+  string id = 1;   // e.g., "123456-789@g.us"
+  string name = 2;
+}
+
+// Generic response confirming an action on multiple items (e.g., groups).
+message ActionConfirmationResponse {
+  repeated string successfulIds = 1; // IDs where action succeeded
+  repeated string failedIds = 2;     // IDs where action failed
+  string message = 3;                // Overall status message
+}
+
+// --- Service Definition ---
+
 // The main service definition for interacting with a shard
 service ShardService {
   // Initiates a connection for a phone number, potentially returning a pairing code
   rpc Connect (ConnectRequest) returns (ConnectResponse);
 
   // Finalizes the connection after QR/pairing code scan (optional, depends on client readiness detection)
-  rpc VerifyConnection (VerifyConnectionRequest) returns (VerifyConnectionResponse);
+  // Uses the generic ClientIdRequest.
+  rpc VerifyConnection (ClientIdRequest) returns (VerifyConnectionResponse);
 
   // Sends a direct message to a specific recipient
   rpc SendMessage (SendMessageRequest) returns (SendMessageResponse);
 
-  // Retrieves all groups (non-archived) for a client
-  rpc GetAllGroups (GetAllGroupsRequest) returns (GetAllGroupsResponse);
+  // Retrieves all groups (non-archived) for a client.
+  // Uses the generic ClientIdRequest.
+  rpc GetAllGroups (ClientIdRequest) returns (GetAllGroupsResponse);
 
-  // Retrieves all archived groups for a client
-  rpc GetAllArchivedGroups (GetAllGroupsRequest) returns (GetAllGroupsResponse); // Reuse GetGroups message types
+  // Retrieves all archived groups for a client.
+  // Uses the generic ClientIdRequest.
+  rpc GetAllArchivedGroups (ClientIdRequest) returns (GetAllGroupsResponse); // Reuse GetGroups message types
 
   // Deletes messages from specified groups
   rpc DeleteMessagesFromGroups (DeleteMessagesFromGroupsRequest) returns (ActionConfirmationResponse);
 
-  // Deletes messages from all archived groups
+  // Deletes messages from all archived groups.
+  // Uses the generic ClientIdRequest.
   rpc DeleteAllMessagesFromArchivedGroups (ClientIdRequest) returns (ActionConfirmationResponse);
 
   // Sends a message to multiple specified groups
   rpc SendMessageToGroups (SendMessageToGroupsRequest) returns (ActionConfirmationResponse);
 
-   // Destroys a client instance and cleans up resources
-  rpc Disconnect (DisconnectRequest) returns (DisconnectResponse);
+  // Destroys a client instance and cleans up resources.
+  // Uses the generic ClientIdRequest.
+  rpc Disconnect (ClientIdRequest) returns (DisconnectResponse);
 
   // Health check endpoint for the shard
   rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
 }
 
-// --- Message Definitions ---
-
-// Generic request containing just the client ID
-message ClientIdRequest {
-  string clientId = 1;
-}
+// --- Specific Request/Response Definitions ---
 
 // Request to initiate a connection
 message ConnectRequest {
@@ -53,14 +77,14 @@ message ConnectRequest {
 message ConnectResponse {
   string clientId = 1;
   optional string pairingCode = 2; // Only present if pairing is needed
-  string message = 3;             // e.g., "Client is ready", "Pairing code required", "Already connected"
+  string message = 3;              // e.g., "Client is ready", "Pairing code required", "Already connected"
   bool needsPairing = 4;
 }
 
-// Request to verify connection (potentially after user confirms pairing)
-message VerifyConnectionRequest {
-  string clientId = 1;
-}
+// Request to verify connection (now uses ClientIdRequest)
+// message VerifyConnectionRequest {
+//   string clientId = 1;
+// }
 
 // Response for VerifyConnection RPC
 message VerifyConnectionResponse {
@@ -82,16 +106,10 @@ message SendMessageResponse {
   string error = 3;     // Error message if success is false
 }
 
-// Structure for representing a group
-message GroupInfo {
-  string id = 1;   // e.g., "123456-789@g.us"
-  string name = 2;
-}
-
-// Request to get groups (used for both all and archived)
-message GetAllGroupsRequest {
-  string clientId = 1;
-}
+// Request to get groups (now uses ClientIdRequest)
+// message GetAllGroupsRequest {
+//   string clientId = 1;
+// }
 
 // Response containing a list of groups
 message GetAllGroupsResponse {
@@ -111,17 +129,10 @@ message SendMessageToGroupsRequest {
   string message = 3;
 }
 
-// Generic response confirming an action on multiple items
-message ActionConfirmationResponse {
-  repeated string successfulIds = 1; // IDs where action succeeded
-  repeated string failedIds = 2;     // IDs where action failed
-  string message = 3;                // Overall status message
-}
-
-// Request to disconnect a client
-message DisconnectRequest {
-  string clientId = 1;
-}
+// Request to disconnect a client (now uses ClientIdRequest)
+// message DisconnectRequest {
+//   string clientId = 1;
+// }
 
 // Response for disconnection
 message DisconnectResponse {
@@ -129,7 +140,7 @@ message DisconnectResponse {
   string message = 2;
 }
 
-// Request for Health Check
+// Request for Health Check (standard empty message)
 message HealthCheckRequest {}
 
 // Response for Health Check
@@ -138,7 +149,7 @@ message HealthCheckResponse {
     UNKNOWN = 0;
     SERVING = 1;
     NOT_SERVING = 2;
-    SERVICE_UNKNOWN = 3; // Used only by the Watcher
+    SERVICE_UNKNOWN = 3; // Used only by the Watcher (if applicable outside this service)
   }
   ServingStatus status = 1;
 }

@@ -1,0 +1,8 @@
+packages:
+  - packages/*
+ignoredBuiltDependencies:
+  - '@nestjs/core'
+  - protobufjs
+  - puppeteer
+onlyBuiltDependencies:
+  - '@swc/core'

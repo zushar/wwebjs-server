@@ -18,6 +18,8 @@
     "noFallthroughCasesInSwitch": false,
     "baseUrl": ".",
     "paths": { 
+      "@whatsapp-cluster/shared-lib": ["packages/shared-lib/src"],
+      "@whatsapp-cluster/shared-lib/*": ["packages/shared-lib/src/*"]
     }
   }
 }
