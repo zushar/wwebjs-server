@@ -40,7 +40,7 @@ services:
       - BROWSER_POOL_ENDPOINT=http://browser-pool:9223
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - PROXIES=http://user1:pass1@proxy1.example.com:8080,http://user2:pass2@proxy2.example.com:8080
+      - PROXIES=http://proxy-server:8080
     depends_on:
       browser-pool:
         condition: service_healthy
@@ -79,7 +79,17 @@ services:
     ports:
       - "3000:3000"
     restart: always
+  proxy-server:
+    image: nginx:alpine
+    container_name: proxy-server
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8080:8080"
+    networks:
+      - default
 
 volumes:
   redis_data:
     driver: local
+  

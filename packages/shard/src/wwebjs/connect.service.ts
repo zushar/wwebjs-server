@@ -276,12 +276,10 @@ export class ConnectService {
 
       this.logger.log(`Starting client initialization for ${clientId}...`);
       client.initialize().catch((error) => {
-        // Improve error logging for better diagnostics
         if (error instanceof Error) {
           this.logger.error(`Client initialization failed for ${clientId}: ${error.message}`, error.stack);
           handleRejection(error);
-        } else if (typeof error === 'object') {
-          // Handle case where error is an object but not an Error instance
+        } else if (typeof error === 'object' && error !== null) {
           try {
             const errorStr = JSON.stringify(error, Object.getOwnPropertyNames(error) || Object.keys(error));
             this.logger.error(`Client initialization failed for ${clientId} with object: ${errorStr}`);
@@ -291,7 +289,6 @@ export class ConnectService {
             handleRejection(new Error(`Initialization failed with non-serializable object`));
           }
         } else {
-          // Handle other error types
           this.logger.error(`Client initialization failed for ${clientId} with: ${String(error)}`);
           handleRejection(new Error(`Initialization failed: ${String(error)}`));
         }
