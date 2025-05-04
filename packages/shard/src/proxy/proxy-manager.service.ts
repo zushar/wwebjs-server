@@ -58,6 +58,31 @@ export class ProxyManagerService implements OnModuleInit {
   }
 
   /**
+   * Directly increments the usage count for a known proxy.
+   * Used during session restoration.
+   * Returns true if successful, false if proxy not found or already at max capacity.
+   */
+  incrementUsage(proxy: string): boolean {
+    if (!this.proxyUsageCount.has(proxy)) {
+      this.logger.warn(`Attempted to increment usage for unknown proxy: ${proxy}.`);
+      return false; // Proxy might have been removed from config
+    }
+
+    const currentCount = this.proxyUsageCount.get(proxy)!; // Assert non-null as we checked has()
+
+    if (currentCount >= MAX_CLIENTS_PER_PROXY) {
+       this.logger.error(`Attempted to increment usage for proxy ${proxy}, but it is already at maximum capacity (${MAX_CLIENTS_PER_PROXY}).`);
+       return false;
+    }
+
+    this.proxyUsageCount.set(proxy, currentCount + 1);
+    this.logger.log(
+      `Incremented usage for proxy ${proxy}. New usage: ${currentCount + 1}/${MAX_CLIENTS_PER_PROXY}`,
+    );
+    return true;
+  }
+
+  /**
    * Allocates a proxy with fewer than MAX_CLIENTS_PER_PROXY clients.
    * @returns The allocated proxy URL string or null if no proxies are configured.
    * @throws InternalServerErrorException if no proxies are available or all are full.

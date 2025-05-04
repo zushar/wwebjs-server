@@ -21,7 +21,7 @@ RUN mkdir -p packages/gateway packages/shared-lib packages/proto
 RUN pnpm install --frozen-lockfile
 
 # Copy the proto files
-COPY packages/proto ./packages/proto/
+COPY packages/proto/whatsapp_shard.proto ./packages/proto/
 
 # Copy the rest of the source code
 COPY . .
@@ -65,6 +65,7 @@ COPY --from=builder /usr/src/app/packages/proto/whatsapp_shard.proto ./proto/
 
 # Expose the HTTP port the gateway service listens on
 EXPOSE 3000
+RUN ls -la ./proto/ || echo "Proto directory is empty or doesn't exist"
 
 # Define the command to run the application
 CMD ["node", "packages/gateway/dist/main.js"]

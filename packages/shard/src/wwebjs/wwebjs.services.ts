@@ -8,8 +8,11 @@ import {
 } from '@nestjs/common';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from 'src/redis/redis.module';
-import { Chat, Client } from 'whatsapp-web.js';
+import { Chat, Client, ClientSession } from 'whatsapp-web.js';
+import { ClientState } from './client-meta.type';
+import { ClientSessionManagerService } from './client-session-manager.service';
 import { ConnectService } from './connect.service';
+import { SessionPersistenceService } from './session-persistence.service';
 
 @Injectable()
 export class WwebjsServices {
@@ -18,6 +21,8 @@ export class WwebjsServices {
   constructor(
     @Inject(REDIS_CLIENT) private readonly redisClient: Redis,
     private readonly connectService: ConnectService,
+    private readonly persistence: SessionPersistenceService,
+    private readonly sessionManager: ClientSessionManagerService
   ) {}
 
   /**
@@ -26,12 +31,10 @@ export class WwebjsServices {
    * If the client is not found in memory, it attempts to restore it from Redis.
    */
   private async getVerifiedClient(clientId: string): Promise<Client> {
-    let clientState:
-      | { client: Client; ready: boolean; verified: boolean }
-      | undefined = undefined;
+    let clientState: ClientState | undefined; 
 
     try {
-      clientState = this.connectService.getClient(clientId);
+      clientState = this.sessionManager.getClient(clientId);
     } catch (e) {
       this.logger.warn(
         `Client ${clientId} not found in memory. Attempting to restore from Redis...`,
@@ -47,7 +50,7 @@ export class WwebjsServices {
         throw new ForbiddenException(errorMsg);
       }
       this.logger.log(`Re-initializing client ${clientId} from Redis...`);
-      const redisClientMeta = await this.connectService.getClientMeta(clientId);
+      const redisClientMeta = await this.persistence.getClientMeta(clientId);
       if (!redisClientMeta) {
         const errorMsg = `Client ${clientId} not found in Redis.`;
         this.logger.error(errorMsg);
@@ -63,7 +66,7 @@ export class WwebjsServices {
       let retries = 10;
       while (retries-- > 0) {
         try {
-          clientState = this.connectService.getClient(clientId);
+          clientState = this.sessionManager.getClient(clientId);
           if (clientState && clientState.ready && clientState.verified) {
             break;
           }
