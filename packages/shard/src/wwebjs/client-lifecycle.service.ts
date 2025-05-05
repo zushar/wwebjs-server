@@ -72,7 +72,7 @@ export class ClientLifecycleService {
     }
 
     // יצירת קליינט חדש
-    const client = await this.clientFactory.createClient(phoneNumber, allocatedProxy);
+    const client = this.clientFactory.createClient(phoneNumber);
 
     const newClientState: ClientState = {
       id: clientId,
@@ -165,38 +165,43 @@ export class ClientLifecycleService {
    */
   async cleanupClient(clientId: string): Promise<void> {
     const clientState = this.sessionManager.getClientState(clientId);
-
+  
     // הסרה מהמפה בזיכרון
     if (!this.sessionManager.removeClient(clientId)) {
       this.logger.warn(`Attempted to clean up client ${clientId}, but it was not found in the active map.`);
     } else {
       this.logger.log(`Removed client ${clientId} from active map.`);
     }
-
+  
     if (!clientState) {
       this.logger.warn(`No client state found for ${clientId} during cleanup details execution.`);
       await this.persistence.cleanupRedisAndFiles(clientId);
       return;
     }
-
+  
     // שחרור פרוקסי
     if (clientState.proxy) {
       this.proxyManager.release(clientState.proxy);
       this.logger.log(`Released proxy ${clientState.proxy} for client ${clientId}.`);
     }
-
-    // הריסת קליינט
+  
+    // הריסת קליינט - עם בדיקה שהקליינט אכן מאותחל
     if (clientState.client) {
       try {
-        await clientState.client.destroy();
-        this.logger.log(`Destroyed wwebjs client instance for ${clientId}.`);
+        // בדיקה האם ה-browser ו-page מאותחלים לפני ניסיון להרוס
+        if (clientState.client.pupBrowser) {
+          await clientState.client.destroy();
+          this.logger.log(`Destroyed wwebjs client instance for ${clientId}.`);
+        } else {
+          this.logger.log(`Client ${clientId} browser was not initialized, skipping destroy call`);
+        }
       } catch (e: any) {
         this.logger.error(`Error destroying client instance for ${clientId}: ${e.message}`, e.stack);
       }
     } else {
       this.logger.warn(`No client instance found in state for ${clientId} during destroy attempt.`);
     }
-
+  
     // מחיקת מפתח Redis וקבצי סשן
     await this.persistence.cleanupRedisAndFiles(clientId);
   }

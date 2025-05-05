@@ -24,12 +24,12 @@
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.1.0",
     "@nestjs/microservices": "^11.1.0",
+    "@whatsapp-cluster/shared-lib": "workspace:*",
     "ioredis": "^5.6.1",
     "node-fetch": "^3.3.2",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "whatsapp-web.js": "^1.27.0",
-    "@whatsapp-cluster/shared-lib": "workspace:*"
+    "whatsapp-web.js": "^1.27.0"
   },
   "devDependencies": {
     "@types/node-fetch": "^2.6.12"

@@ -15,21 +15,23 @@ services:
       retries: 5
       start_period: 5s
 
-  browser-pool:
-    container_name: browser-pool-wwebjs
-    build:
-      context: ./packages/browser-pool
-    ports:
-      - "9222:9222"
-      - "9223:9223"  
-    shm_size: 3gb
-    healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9222/json/version || curl -s http://localhost:9223/json/version || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 180s 
-    restart: always
+  # browser-pool:
+  #   container_name: browser-pool-wwebjs
+  #   build:
+  #     context: ./packages/browser-pool
+  #   environment:
+  #     - DEBUG=puppeteer:*
+  #   ports:
+  #     - "9222:9222"
+  #     - "9223:9223"  
+  #   shm_size: 3gb
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -s http://localhost:9222/json/version || curl -s http://localhost:9223/json/version || exit 1"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 180s 
+  #   restart: always
 
   shard:
     container_name: shard-wwebjs
@@ -37,27 +39,30 @@ services:
       context: .                 
       dockerfile: packages/shard/Dockerfile
     environment:
-      - BROWSER_POOL_ENDPOINT=http://browser-pool:9223
+      - BROWSER_POOL_URL=http://172.18.0.4:9223
+      - BROWSER_WS_ENDPOINT=true
+      - PUPPETEER_SKIP_DOWNLOAD=true
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - PROXIES=http://proxy-server:8080
-    depends_on:
-      browser-pool:
-        condition: service_healthy
-    command: >
-      sh -c "
-        echo 'Waiting for browser-pool to be fully ready...' &&
-        until curl -s http://browser-pool:9223/json/version > /dev/null; do
-          echo 'Waiting for browser-pool...' &&
-          sleep 5;
-        done &&
-        echo 'Browser pool is ready!' &&
-        node /usr/src/app/packages/shard/dist/main.js
-      "
+    # depends_on:
+    #   browser-pool:
+    #     condition: service_healthy
+    # command: >
+    #   sh -c "
+    #     echo 'Waiting for browser-pool to be fully ready...' &&
+    #     until curl -s http://browser-pool:9223/json/version > /dev/null; do
+    #       echo 'Waiting for browser-pool...' &&
+    #       sleep 5;
+    #     done &&
+    #     echo 'Browser pool is ready!' &&
+    #     node /usr/src/app/packages/shard/dist/main.js
+      # "
     ports:
       - "50051:50051"
     volumes:
-      - ./whatsapp-sessions:/usr/src/app/sessions
+      - ./whatsapp-sessions:/tmp/sessions
     healthcheck:
       test: ["CMD", "nc", "-z", "127.0.0.1", "50051"]
       interval: 10s

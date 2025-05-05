@@ -1,7 +1,6 @@
-// packages/shard/src/wwebjs/client-factory.service.ts
+// client-factory.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import fetch from 'node-fetch';
 import { Client, ClientOptions, LocalAuth } from 'whatsapp-web.js';
 
 @Injectable()
@@ -10,88 +9,58 @@ export class ClientFactoryService {
 
   constructor(private configService: ConfigService) {}
 
-  async createClient(phoneNumber: string, proxyUrl: string | null): Promise<Client> {
-    this.logger.debug(`Creating WhatsApp client for: ${phoneNumber}${proxyUrl ? ' via proxy ' + proxyUrl : ''}`);
-
-    const browserHttpEndpoint = this.configService.get<string>(
-      'BROWSER_POOL_ENDPOINT',
-    );
-
-    if (!browserHttpEndpoint || !browserHttpEndpoint.startsWith('http')) {
-      this.logger.error(
-        'BROWSER_POOL_ENDPOINT env var must be set to the HTTP endpoint (e.g., http://browser-pool:9223)',
-      );
-      throw new Error('Browser Pool endpoint is not configured correctly.');
-    }
-
-    let dynamicWSEndpoint: string | undefined;
-    try {
-      // Add the Host header to fix the 500 error
-      const response = await fetch(`${browserHttpEndpoint}/json/version`, {
-        headers: {
-          'Host': 'localhost'
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error fetching browser version! status: ${response.status}`);
-      }
-      
-      const versionInfo = (await response.json()) as {
-        webSocketDebuggerUrl?: string;
-      };
-      
-      dynamicWSEndpoint = versionInfo.webSocketDebuggerUrl;
-      if (!dynamicWSEndpoint) {
-        throw new Error('webSocketDebuggerUrl not found in version response.');
-      }
-      
-      dynamicWSEndpoint = dynamicWSEndpoint.replace('ws://localhost', 'ws://browser-pool:9223');
-      dynamicWSEndpoint = dynamicWSEndpoint.replace('ws://127.0.0.1', 'ws://browser-pool:9223');
-      
-      this.logger.debug(`Discovered WebSocket endpoint: ${dynamicWSEndpoint}`);
-    } catch (error: any) {
-      this.logger.error(
-        `Failed to fetch browser WebSocket endpoint from ${browserHttpEndpoint}/json/version: ${error.message}`,
-        error.stack,
-      );
-      throw new Error(`Could not connect to browser pool: ${error.message}`);
-    }
-
-    const puppeteerOptions: ClientOptions['puppeteer'] = {
-      headless: true,
-      browserWSEndpoint: dynamicWSEndpoint,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-gpu',
-        '--disable-dev-shm-usage',
-      ],
-    };
-
-    if (proxyUrl) {
-      puppeteerOptions.args = puppeteerOptions.args || [];
-      puppeteerOptions.args.push(`--proxy-server=${proxyUrl}`);
-      this.logger.log(`Using proxy server: ${proxyUrl}`);
-      this.logger.debug(`Using proxy for WhatsApp client: ${proxyUrl}`);
-    }
-
-    const clientOptions: ClientOptions = {
+  /**
+   * Creates a new WhatsApp Web.js client with consistent configuration
+   * @param phoneNumber The phone number to associate with this client
+   * @returns A configured Client instance
+   */
+  createClient(phoneNumber: string): Client {
+    this.logger.debug(`Creating WhatsApp client for: ${phoneNumber}`);
+    
+    const defaultOptions: ClientOptions = {
       authStrategy: new LocalAuth({
         clientId: phoneNumber,
-        dataPath: './sessions',
+        dataPath: this.configService.get<string>('SESSIONS_PATH') || '/tmp/sessions'
       }),
-      puppeteer: puppeteerOptions,
-      authTimeoutMs: 90000,
-      takeoverTimeoutMs: 90000,
-      qrMaxRetries: 10,
+      puppeteer: {
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-gpu',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-extensions',
+          '--disable-sync',
+          '--disable-background-networking',
+          '--disable-default-apps',
+          '--mute-audio',
+          '--hide-scrollbars',
+          '--disable-translate',
+          '--disable-features=site-per-process',
+          '--window-size=1280,1024',
+          // ארגומנטים חדשים שיעזרו בסביבת Docker
+          '--ignore-certificate-errors',
+          '--disable-web-security',
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-blink-features=AutomationControlled',
+          '--disable-infobars',
+        ],
+        ignoreHTTPSErrors: true,
+        handleSIGINT: false,
+        handleSIGTERM: false,
+        handleSIGHUP: false,
+        timeout: 120000, // תן זמן ארוך יותר לטעינה (2 דקות)
+      },
+      webVersionCache: {
+        type: 'none' // למנוע שימוש במטמון גרסאות
+      },
+      webVersion: '2.2403.5', // הגדרת גרסה קבועה למניעת בעיות תאימות
+      qrMaxRetries: 5,
     };
 
-    try {
-      return new Client(clientOptions);
-    } catch (error) {
-      this.logger.error(`Failed to create WhatsApp client for ${phoneNumber}: ${error.message}`, error.stack);
-      throw new Error(`Client creation failed: ${error.message}`);
-    }
+    return new Client(defaultOptions);
   }
 }

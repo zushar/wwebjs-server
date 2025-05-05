@@ -99,8 +99,7 @@ export class SessionRestoreService {
     
     
               const client = await this.clientFactory.createClient(
-                clientId,
-                clientMeta.proxy, // Use the proxy from Redis
+                clientId // Use the proxy from Redis
               );
     
               const restoredClientState: ClientState = {
