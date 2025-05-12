@@ -15,6 +15,7 @@ export class ClientFactoryService {
     const defaultOptions: ClientOptions = {
       authStrategy: new LocalAuth({
         clientId: phoneNumber,
+        dataPath: `./whatsapp-session/${phoneNumber}`,
       }),
       puppeteer: {
         headless: true, // Set to false for debugging if needed
@@ -24,16 +25,9 @@ export class ClientFactoryService {
           '--disable-gpu',
           '--disable-dev-shm-usage',
           '--disable-accelerated-2d-canvas',
-          '--no-first-run',
-          '--no-zygote',
-          '--single-process',
-          '--disable-features=site-per-process',
-          '--window-size=1920,1080',
-          '--js-flags="--max-old-space-size=128"', // Limit JS heap to 128MB per Chromium
         ],
       },
     };
-
     return new Client(defaultOptions);
   }
 }

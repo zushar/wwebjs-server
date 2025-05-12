@@ -1,12 +1,11 @@
 // whatsapp-test.controller.ts
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
   Logger,
   Post,
-  Delete,
-  BadRequestException,
   Query,
 } from '@nestjs/common';
 import { ClientType } from 'src/wwebjs/client-meta.type';
@@ -45,7 +44,7 @@ class DeleteGroupsDto {
   groupIds: string[];
 }
 
-@Controller('api/whatsapp-test')
+@Controller()
 export class WhatsAppTestController {
   private readonly logger = new Logger(WhatsAppTestController.name);
 
@@ -60,7 +59,7 @@ export class WhatsAppTestController {
     return 'Test endpoint is working';
   }
 
-  @Post('create-code')
+  @Post('create')
   async createVerificationCode(
     @Body() dto: CreateConnectionDto,
   ): Promise<{ clientId: string; pairingCode?: string }> {
@@ -84,17 +83,7 @@ export class WhatsAppTestController {
     );
   }
 
-  @Post('verify-code')
-  async verifyCode(@Body() dto: VerifyCodeDto): Promise<{ message: string }> {
-    this.logger.log(`Verifying code for clientId: ${dto.clientId}`);
-    if (!dto.clientId) {
-      this.logger.error('clientId is required');
-      throw new BadRequestException('clientId is required');
-    }
-    return await this.connectService.verifyCode(dto.clientId);
-  }
-
-  @Post('send-message')
+  @Post('message/send')
   async sendMessage(@Body() dto: SendMessageDto): Promise<unknown> {
     this.logger.log(
       `Sending message from clientId: ${dto.clientId} to recipient: ${dto.recipient}`,
@@ -136,7 +125,7 @@ export class WhatsAppTestController {
     return await this.wwebjsServices.getAllGroupsInArchive(query.clientId);
   }
 
-  @Delete('delete/archive/all')
+  @Post('groups/archived/delete')
   async deleteAllMessagesFromArchivedGroups(
     @Query() query: GetGroupsDto,
   ): Promise<{ deletedFromGroups: string[] }> {
@@ -152,7 +141,7 @@ export class WhatsAppTestController {
     );
   }
 
-  @Delete('delete/group')
+  @Post('groups/delete')
   async deleteMessagesFromGroups(
     @Body() dto: DeleteGroupsDto,
   ): Promise<{ deletedFromGroups: string[]; invalidGroupIds: string[] }> {
@@ -169,7 +158,7 @@ export class WhatsAppTestController {
     );
   }
 
-  @Post('send/group')
+  @Post('groups/send')
   async sendMessageToGroups(
     @Body() dto: SendMessageToGroupsDto,
   ): Promise<{ sentToGroups: string[]; invalidGroupIds: string[] }> {

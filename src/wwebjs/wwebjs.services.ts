@@ -27,7 +27,7 @@ export class WwebjsServices {
    */
   private async getVerifiedClient(clientId: string): Promise<Client> {
     let clientState:
-      | { client: Client; ready: boolean; verified: boolean }
+      | { client: Client; ready: boolean;}
       | undefined = undefined;
 
     try {
@@ -39,13 +39,6 @@ export class WwebjsServices {
     }
 
     if (!clientState) {
-      // Not in memory, try to restore from Redis
-      const isVerified = await this.connectService.isClientVerified(clientId);
-      if (!isVerified) {
-        const errorMsg = `Client for clientId ${clientId} is not verified in Redis. Please complete the pairing process.`;
-        this.logger.error(errorMsg);
-        throw new ForbiddenException(errorMsg);
-      }
       this.logger.log(`Re-initializing client ${clientId} from Redis...`);
       const redisClientMeta = await this.connectService.getClientMeta(clientId);
       if (!redisClientMeta) {
@@ -57,14 +50,13 @@ export class WwebjsServices {
       await this.connectService.createVerificationCode(
         clientId,
         redisClientMeta.type,
-        redisClientMeta.verified,
       );
       // Wait for the client to be ready in memory
       let retries = 10;
       while (retries-- > 0) {
         try {
           clientState = this.connectService.getClient(clientId);
-          if (clientState && clientState.ready && clientState.verified) {
+          if (clientState && clientState.ready) {
             break;
           }
         } catch (e) {
@@ -72,20 +64,12 @@ export class WwebjsServices {
         }
         await new Promise((res) => setTimeout(res, 1000)); // Wait 1 second
       }
-      if (!clientState || !clientState.ready || !clientState.verified) {
+      if (!clientState || !clientState.ready) {
         const errorMsg = `Failed to re-initialize client for clientId ${clientId} from Redis.`;
         this.logger.error(errorMsg);
         throw new ForbiddenException(errorMsg);
       }
-    } else {
-      // If in memory, check verification
-      if (!clientState.verified) {
-        const errorMsg = `Client for clientId ${clientId} has not completed the verification step.`;
-        this.logger.error(errorMsg);
-        throw new ForbiddenException(errorMsg);
-      }
     }
-
     return clientState.client;
   }
 

@@ -1,11 +1,11 @@
 // connect.service.ts
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import * as fs from 'fs';
 import Redis from 'ioredis';
-import { ClientFactoryService } from './client-factory.service';
 import { Client } from 'whatsapp-web.js';
 import { REDIS_CLIENT } from '../redis/redis.module';
-import { ClientType, ClientMeta, ClientState } from './client-meta.type';
-import * as fs from 'fs';
+import { ClientFactoryService } from './client-factory.service';
+import { ClientMeta, ClientState, ClientType } from './client-meta.type';
 
 @Injectable()
 export class ConnectService {
@@ -57,7 +57,6 @@ export class ConnectService {
   getClient(phoneNumber: string): {
     client: Client;
     ready: boolean;
-    verified: boolean;
   } {
     const clientData = this.clients.get(phoneNumber);
     if (!clientData) {
@@ -74,9 +73,20 @@ export class ConnectService {
     return {
       client: clientData.client,
       ready: clientData.ready,
-      verified: clientData.verified,
     };
   }
+
+  removeClient(phoneNumber: string): void {
+    const clientData = this.clients.get(phoneNumber);
+    if (!clientData) {
+      this.logger.warn(
+        `Client for phone number ${phoneNumber} not found in memory`,
+      );
+      return;
+    }
+    this.logger.log(`Removing client ${phoneNumber} from memory.`);
+    this.clients.delete(phoneNumber);
+    }
 
   /**
    * Converts a ClientState to a ClientMeta for Redis storage.
@@ -84,7 +94,6 @@ export class ConnectService {
   private toClientMeta(state: ClientState): ClientMeta {
     return {
       id: state.id,
-      verified: state.verified,
       type: state.clientType,
       lastActive: state.lastActive,
     };
@@ -97,23 +106,13 @@ export class ConnectService {
   async createVerificationCode(
     phoneNumber: string,
     clientType: ClientType,
-    verifid = false,
   ): Promise<{ clientId: string; pairingCode?: string; message?: string }> {
     const clientId = phoneNumber;
     this.logger.log(`Initializing WhatsApp client for: ${phoneNumber}`);
     const clientData: ClientState | undefined = this.clients.get(clientId);
-
-    if (clientData && !clientData.verified) {
+    if (clientData) {
       this.logger.warn(
-        `Client ${clientId} already exists but is not verified.`,
-      );
-      return {
-        clientId: clientData.id,
-        message: 'Client already exists but not verified',
-      };
-    } else if (clientData && clientData.verified) {
-      this.logger.warn(
-        `Client ${clientId} already exists and is verified. Reinitializing...`,
+        `Client ${clientId} already exists. Reinitializing...`,
       );
       return {
         clientId: clientData.id,
@@ -126,7 +125,6 @@ export class ConnectService {
       id: clientId,
       client: client,
       ready: false,
-      verified: verifid,
       lastActive: Date.now(),
       clientType: clientType,
     };
@@ -171,7 +169,6 @@ export class ConnectService {
           clearTimeout(timeout);
           this.logger.log(`Client ready for ${phoneNumber}`);
           newClient.ready = true;
-          newClient.verified = true;
           newClient.lastActive = Date.now();
           this.clients.set(clientId, newClient);
 
@@ -179,7 +176,7 @@ export class ConnectService {
             this.getRedisKey(clientId),
             JSON.stringify(this.toClientMeta(newClient)),
           );
-          this.logger.log(`Stored verified status in Redis for ${phoneNumber}`);
+          this.logger.log(`Stored ready status in Redis for ${phoneNumber}`);
           resolve({ clientId, message: 'Client is ready' });
         } else {
           this.logger.warn(
@@ -197,7 +194,6 @@ export class ConnectService {
         }
         pairingCodeRequested = true;
         newClient.ready = true;
-        newClient.verified = false;
         this.clients.set(clientId, newClient);
 
         this.logger.log(
@@ -321,64 +317,5 @@ export class ConnectService {
         }
       });
     });
-  }
-
-  /**
-   * Verifies the pairing code provided by the end user by updating Redis.
-   * Note: This assumes the 'ready' event will fire on the client instance
-   * after successful pairing, which will handle the final verification state.
-   * This method primarily confirms the user action.
-   */
-  async verifyCode(phoneNumber: string): Promise<{ message: string }> {
-    const clientId = phoneNumber;
-    this.logger.log(`Processing verification for phoneNumber: ${phoneNumber}`);
-
-    const connection = this.clients.get(clientId);
-    if (!connection) {
-      const errorMsg = `Client for phone number ${phoneNumber} not found in memory during verification. It might have disconnected.`;
-      this.logger.error(errorMsg);
-      throw new Error(errorMsg);
-    }
-
-    if (!connection.ready) {
-      const errorMsg = `Client ${phoneNumber} is not ready for verification.`;
-      this.logger.error(errorMsg);
-      throw new Error(errorMsg);
-    }
-
-    connection.verified = true;
-    await this.redisClient.set(
-      this.getRedisKey(clientId),
-      JSON.stringify(this.toClientMeta(connection)),
-    );
-
-    this.logger.log(
-      `Client ${phoneNumber} marked as verified in Redis and memory. Waiting for 'ready' event for final confirmation.`,
-    );
-    return { message: 'Verification processed. Client should become ready.' };
-  }
-
-  /**
-   * Checks if a client associated with the phone number is verified in Redis.
-   */
-  async isClientVerified(phoneNumber: string): Promise<boolean> {
-    const redisKey = this.getRedisKey(phoneNumber);
-    const data = await this.redisClient.get(redisKey);
-    if (!data) {
-      this.logger.warn(
-        `No Redis record found for ${phoneNumber} during verification check.`,
-      );
-      return false;
-    }
-    try {
-      const parsedData = JSON.parse(data) as ClientMeta;
-      return parsedData.verified;
-    } catch (e) {
-      this.logger.error(
-        `Failed to parse Redis data for ${phoneNumber} during verification check: ${data}`,
-        e,
-      );
-      return false;
-    }
   }
 }
