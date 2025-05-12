@@ -3,6 +3,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Logger,
   Post,
@@ -176,5 +177,18 @@ export class WhatsAppTestController {
       dto.groupIds,
       dto.message,
     );
+  }
+
+  @Delete('delete')
+  async deleteClient(
+    @Query('clientId') clientId: string,
+  ): Promise<{ message: string }> {
+    this.logger.log(`Deleting client with clientId: ${clientId}`);
+    if (!clientId) {
+      this.logger.error('clientId is required');
+      throw new BadRequestException('clientId is required');
+    }
+    await this.wwebjsServices.deleteClient(clientId);
+    return { message: 'Client deleted successfully' };
   }
 }

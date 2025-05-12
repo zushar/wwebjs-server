@@ -85,6 +85,12 @@ export class ConnectService {
       return;
     }
     this.logger.log(`Removing client ${phoneNumber} from memory.`);
+    clientData.client.destroy().catch((e) =>
+      this.logger.error(
+        `Error destroying client ${phoneNumber} during removal:`,
+        e,
+      ),
+    );
     this.clients.delete(phoneNumber);
     }
 

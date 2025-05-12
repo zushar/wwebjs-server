@@ -295,4 +295,11 @@ export class WwebjsServices {
 
     return { sentToGroups, invalidGroupIds };
   }
+  /**
+   * Deletes a client from memory.
+   */
+  deleteClient(clientId: string): void {
+    this.logger.log(`Deleting client with clientId: ${clientId}`);
+    this.connectService.removeClient(clientId);
+  }
 }
