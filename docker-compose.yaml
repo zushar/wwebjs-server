@@ -17,8 +17,9 @@ services:
         - "3000:3000"
       develop:
         watch:
-          - actions: rebuild
-            path: .
+        - path: ./src  # Path to watch
+          target: /app/src  # Where to sync in container
+          action: sync  # Add this line (options: sync, rebuild, sync+restart)
       depends_on:
         - redis
       environment:
