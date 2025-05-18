@@ -85,14 +85,16 @@ export class ConnectService {
       return;
     }
     this.logger.log(`Removing client ${phoneNumber} from memory.`);
-    clientData.client.destroy().catch((e) =>
-      this.logger.error(
-        `Error destroying client ${phoneNumber} during removal:`,
-        e,
-      ),
-    );
+    clientData.client
+      .destroy()
+      .catch((e) =>
+        this.logger.error(
+          `Error destroying client ${phoneNumber} during removal:`,
+          e,
+        ),
+      );
     this.clients.delete(phoneNumber);
-    }
+  }
 
   /**
    * Converts a ClientState to a ClientMeta for Redis storage.
@@ -117,9 +119,7 @@ export class ConnectService {
     this.logger.log(`Initializing WhatsApp client for: ${phoneNumber}`);
     const clientData: ClientState | undefined = this.clients.get(clientId);
     if (clientData) {
-      this.logger.warn(
-        `Client ${clientId} already exists. Reinitializing...`,
-      );
+      this.logger.warn(`Client ${clientId} already exists. Reinitializing...`);
       return {
         clientId: clientData.id,
         message: 'Client already exists and is verified',

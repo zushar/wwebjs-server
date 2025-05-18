@@ -26,9 +26,7 @@ export class WwebjsServices {
    * If the client is not found in memory, it attempts to restore it from Redis.
    */
   private async getVerifiedClient(clientId: string): Promise<Client> {
-    let clientState:
-      | { client: Client; ready: boolean;}
-      | undefined = undefined;
+    let clientState: { client: Client; ready: boolean } | undefined = undefined;
 
     try {
       clientState = this.connectService.getClient(clientId);
