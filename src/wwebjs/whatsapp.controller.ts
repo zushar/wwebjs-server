@@ -52,7 +52,7 @@ export class WhatsAppTestController {
   @Get('test')
   test(): string {
     this.logger.log('Test endpoint hit');
-    return 'Test endpoint is working';
+    return 'Test endpoint is working and returning a string';
   }
 
   @Post('create')
