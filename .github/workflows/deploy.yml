@@ -2,24 +2,25 @@ name: Deploy to AWS Lightsail
 
 on:
   push:
-    branches: [ master ] 
+    branches: [ master ] # or master, depending on your default branch
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v2
       
       - name: Set up SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.LIGHTSAIL_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan ${{ secrets.LIGHTSAIL_HOST }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H 52.59.248.51 >> ~/.ssh/known_hosts
       
       - name: Deploy to Lightsail
         run: |
-          ssh ${{ secrets.LIGHTSAIL_USERNAME }}@${{ secrets.LIGHTSAIL_HOST }} "cd ~/wwebjs-server && \
+          ssh ubuntu@52.59.248.51 "cd ~/wwebjs-server && \
             git pull && \
             docker-compose down && \
             docker-compose build --no-cache && \
