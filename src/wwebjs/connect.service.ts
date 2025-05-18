@@ -169,7 +169,7 @@ export class ConnectService {
         );
       });
 
-      client.on('ready', async () => {
+      client.on('ready', () => {
         if (!resolved) {
           resolved = true;
           clearTimeout(timeout);
@@ -178,12 +178,28 @@ export class ConnectService {
           newClient.lastActive = Date.now();
           this.clients.set(clientId, newClient);
 
-          await this.redisClient.set(
-            this.getRedisKey(clientId),
-            JSON.stringify(this.toClientMeta(newClient)),
-          );
-          this.logger.log(`Stored ready status in Redis for ${phoneNumber}`);
-          resolve({ clientId, message: 'Client is ready' });
+          void this.redisClient
+            .set(
+              this.getRedisKey(clientId),
+              JSON.stringify(this.toClientMeta(newClient)),
+            )
+            .then(() => {
+              this.logger.log(
+                `Stored ready status in Redis for ${phoneNumber}`,
+              );
+              resolve({ clientId, message: 'Client is ready' });
+            })
+            .catch((error) => {
+              this.logger.error(
+                `Failed to store Redis data for ${phoneNumber}:`,
+                error,
+              );
+              // Still resolve since client is ready
+              resolve({
+                clientId,
+                message: 'Client is ready (Redis update failed)',
+              });
+            });
         } else {
           this.logger.warn(
             `'ready' event received for ${phoneNumber} after promise was already resolved.`,
@@ -191,7 +207,7 @@ export class ConnectService {
         }
       });
 
-      client.on('qr', (_qr: string) => {
+      client.on('qr', () => {
         if (resolved || pairingCodeRequested) {
           this.logger.debug(
             `Ignoring extra QR event for ${phoneNumber} (resolved: ${resolved}, requested: ${pairingCodeRequested}).`,

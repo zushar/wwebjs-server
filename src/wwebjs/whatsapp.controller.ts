@@ -19,11 +19,6 @@ class CreateConnectionDto {
   clientType: ClientType;
 }
 
-class VerifyCodeDto {
-  clientId: string;
-  code?: string;
-}
-
 class SendMessageDto {
   clientId: string;
   recipient: string;
@@ -147,7 +142,7 @@ export class WhatsAppTestController {
     @Body() dto: DeleteGroupsDto,
   ): Promise<{ deletedFromGroups: string[]; invalidGroupIds: string[] }> {
     this.logger.log(
-      `Deleting messages from groups for clientId: ${dto.clientId}, groupIds: ${dto.groupIds}`,
+      `Deleting messages from groups for clientId: ${dto.clientId}, groupIds: ${dto.groupIds.join(',')}`,
     );
     if (!dto.clientId || !dto.groupIds || !Array.isArray(dto.groupIds)) {
       this.logger.error('clientId and groupIds are required');
@@ -164,7 +159,7 @@ export class WhatsAppTestController {
     @Body() dto: SendMessageToGroupsDto,
   ): Promise<{ sentToGroups: string[]; invalidGroupIds: string[] }> {
     this.logger.log(
-      `Sending message to groups for clientId: ${dto.clientId}, groupIds: ${dto.groupIds}`,
+      `Sending message to groups for clientId: ${dto.clientId}, groupIds: ${dto.groupIds.join(',')}`,
     );
     if (!dto.clientId || !dto.groupIds || !dto.message) {
       this.logger.error('clientId, groupIds, and message are required');
@@ -180,15 +175,13 @@ export class WhatsAppTestController {
   }
 
   @Delete('delete')
-  async deleteClient(
-    @Query('clientId') clientId: string,
-  ): Promise<{ message: string }> {
+  deleteClient(@Query('clientId') clientId: string): { message: string } {
     this.logger.log(`Deleting client with clientId: ${clientId}`);
     if (!clientId) {
       this.logger.error('clientId is required');
       throw new BadRequestException('clientId is required');
     }
-    await this.wwebjsServices.deleteClient(clientId);
+    this.wwebjsServices.deleteClient(clientId);
     return { message: 'Client deleted successfully' };
   }
 }

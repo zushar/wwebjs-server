@@ -30,7 +30,7 @@ export class WwebjsServices {
 
     try {
       clientState = this.connectService.getClient(clientId);
-    } catch (e) {
+    } catch {
       this.logger.warn(
         `Client ${clientId} not found in memory. Attempting to restore from Redis...`,
       );
@@ -57,8 +57,11 @@ export class WwebjsServices {
           if (clientState && clientState.ready) {
             break;
           }
-        } catch (e) {
+        } catch {
           // Not ready yet
+          this.logger.warn(
+            `Client ${clientId} not ready yet. Retrying... (${10 - retries}/10)`,
+          );
         }
         await new Promise((res) => setTimeout(res, 1000)); // Wait 1 second
       }
