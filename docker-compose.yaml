@@ -15,6 +15,10 @@ services:
       container_name: whatsapp-cluster
       ports:
         - "3000:3000"
+      develop:
+        watch:
+          - actions: rebuild
+            path: .
       depends_on:
         - redis
       environment:
