@@ -20,8 +20,6 @@ export class ClientFactoryService {
           '--disable-gpu',
           '--disable-accelerated-2d-canvas',
           '--disable-dev-shm-usage',
-          '--remote-debugging-port=9222',
-          '--remote-debugging-address=0.0.0.0',
           '--disable-features=site-per-process',
           '--disable-crash-reporter',
         ],
