@@ -238,6 +238,7 @@ export class ConnectService {
           return;
         }
         pairingCodeRequested = true;
+        newClient.ready = true;
         this.clients.set(clientId, newClient);
 
         this.logger.log(
