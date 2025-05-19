@@ -11,11 +11,34 @@ import { ClientMeta, ClientState, ClientType } from './client-meta.type';
 export class ConnectService {
   private readonly logger = new Logger(ConnectService.name);
   private clients: Map<string, ClientState> = new Map();
+  private readonly sessionTimeout = 60 * 60 * 1000; // שעה אחת של חוסר פעילות
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redisClient: Redis,
     private readonly clientFactory: ClientFactoryService,
-  ) {}
+  ) {
+    // הפעל ניקוי אוטומטי של סשנים לא פעילים כל 15 דקות
+    setInterval(
+      () => {
+        this.cleanupInactiveClients().catch((err) =>
+          this.logger.error('Error in cleanupInactiveClients:', err),
+        );
+      },
+      15 * 60 * 1000,
+    );
+  }
+
+  private async cleanupInactiveClients(): Promise<void> {
+    this.logger.log('Running cleanup of inactive clients');
+    const now = Date.now();
+
+    for (const [phoneNumber, clientState] of this.clients.entries()) {
+      if (now - clientState.lastActive > this.sessionTimeout) {
+        this.logger.log(`Auto-removing inactive client ${phoneNumber}`);
+        await Promise.resolve(this.removeClient(phoneNumber));
+      }
+    }
+  }
 
   private getRedisKey(phoneNumber: string): string {
     return `wa-client:${phoneNumber}`;

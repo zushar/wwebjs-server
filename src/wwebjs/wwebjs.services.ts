@@ -103,6 +103,8 @@ export class WwebjsServices {
       throw new InternalServerErrorException(
         `Failed to send message: ${error instanceof Error ? error.message : String(error)}`,
       );
+    } finally {
+      this.forceMemoryCleanup();
     }
   }
 
@@ -132,6 +134,8 @@ export class WwebjsServices {
       throw new InternalServerErrorException(
         `Failed to fetch groups: ${error instanceof Error ? error.message : String(error)}`,
       );
+    } finally {
+      this.forceMemoryCleanup();
     }
   }
 
@@ -164,6 +168,8 @@ export class WwebjsServices {
       throw new InternalServerErrorException(
         `Failed to fetch archived groups: ${error instanceof Error ? error.message : String(error)}`,
       );
+    } finally {
+      this.forceMemoryCleanup();
     }
   }
 
@@ -199,9 +205,10 @@ export class WwebjsServices {
           );
         }
       }
-
+      this.forceMemoryCleanup();
       return { deletedFromGroups };
     } catch (error) {
+      this.forceMemoryCleanup();
       this.logger.error(
         `Error deleting messages from archived groups for ${clientId}:`,
         error,
@@ -250,7 +257,7 @@ export class WwebjsServices {
         invalidGroupIds.push(groupId);
       }
     }
-
+    this.forceMemoryCleanup();
     return { deletedFromGroups, invalidGroupIds };
   }
 
@@ -293,7 +300,7 @@ export class WwebjsServices {
         invalidGroupIds.push(groupId);
       }
     }
-
+    this.forceMemoryCleanup();
     return { sentToGroups, invalidGroupIds };
   }
   /**
@@ -302,5 +309,13 @@ export class WwebjsServices {
   deleteClient(clientId: string): void {
     this.logger.log(`Deleting client with clientId: ${clientId}`);
     this.connectService.removeClient(clientId);
+  }
+
+  forceMemoryCleanup(): void {
+    this.logger.log('Forcing memory cleanup');
+    // הפעל garbage collection באופן יזום
+    if (global.gc) {
+      global.gc();
+    }
   }
 }

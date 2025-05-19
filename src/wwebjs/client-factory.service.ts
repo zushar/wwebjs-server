@@ -5,11 +5,6 @@ import { Client, ClientOptions, LocalAuth } from 'whatsapp-web.js';
 export class ClientFactoryService {
   private readonly logger = new Logger(ClientFactoryService.name);
 
-  /**
-   * Creates a new WhatsApp Web.js client with consistent configuration
-   * @param phoneNumber The phone number to associate with this client
-   * @returns A configured Client instance
-   */
   createClient(phoneNumber: string): Client {
     this.logger.debug(`Creating WhatsApp client for: ${phoneNumber}`);
     const defaultOptions: ClientOptions = {
@@ -18,14 +13,26 @@ export class ClientFactoryService {
         dataPath: `./whatsapp-session/${phoneNumber}`,
       }),
       puppeteer: {
-        headless: true, // Set to false for debugging if needed
+        headless: true,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-gpu',
           '--disable-dev-shm-usage',
           '--disable-accelerated-2d-canvas',
+          // הוסף ארגומנטים לחיסכון במשאבים:
+          '--disable-extensions',
+          '--disable-component-extensions-with-background-pages',
+          '--disable-default-apps',
+          '--disable-features=Translate,BackForwardCache',
+          '--single-process', // חסכוני יותר אבל פחות יציב
+          '--disable-field-trial-config',
+          '--no-default-browser-check',
+          '--disable-background-networking',
+          '--enable-features=NetworkService,NetworkServiceInProcess',
+          '--js-flags=--max-old-space-size=512', // הגבלת זיכרון JavaScript ל-512MB
         ],
+        defaultViewport: { width: 800, height: 600 }, // ברירת מחדל קטנה יותר
       },
     };
     return new Client(defaultOptions);
