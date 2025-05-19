@@ -1,6 +1,6 @@
 FROM node:22
 
-# Install required dependencies for Puppeteer (which is used by whatsapp-web.js)
+# Install required dependencies for Puppeteer
 RUN apt-get update && apt-get install -y \
     gconf-service \
     libasound2 \
@@ -41,17 +41,20 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     wget
 
-# Set the working directory in the container
+# Set the working directory
 WORKDIR /usr/src/app
 
-# Copy package.json and package-lock.json first to leverage Docker cache
+# Copy package files
 COPY package.json package-lock.json ./
 
-# Install project dependencies
-RUN npm install 
+# Install dependencies
+RUN npm install
 
-# Copy the rest of the application code
+# Copy application code
 COPY . .
+
+# Create whatsapp-session directory and set permissions
+RUN mkdir -p whatsapp-session && chmod -R 777 whatsapp-session
 
 # Build the application
 RUN npm run build

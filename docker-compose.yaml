@@ -30,5 +30,7 @@ services:
         - ./whatsapp-session:/usr/src/app/whatsapp-session
 
 volumes:
-  redis_data: # הגדרת ה-Volume בשם redis_data שישמש לשמירת הנתונים
-    driver: local # שימוש בדרייבר ברירת המחדל לשמירה מקומית
+  redis_data:
+    driver: local
+  whatsapp_sessions:
+    driver: local

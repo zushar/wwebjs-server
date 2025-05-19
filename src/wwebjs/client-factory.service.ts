@@ -18,19 +18,12 @@ export class ClientFactoryService {
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-gpu',
-          '--disable-dev-shm-usage',
           '--disable-accelerated-2d-canvas',
-          // הוסף ארגומנטים לחיסכון במשאבים:
-          '--disable-extensions',
-          '--disable-component-extensions-with-background-pages',
-          '--disable-default-apps',
-          '--disable-features=Translate,BackForwardCache',
-          '--single-process', // חסכוני יותר אבל פחות יציב
-          '--disable-field-trial-config',
-          '--no-default-browser-check',
-          '--disable-background-networking',
-          '--enable-features=NetworkService,NetworkServiceInProcess',
-          '--js-flags=--max-old-space-size=512', // הגבלת זיכרון JavaScript ל-512MB
+          '--disable-dev-shm-usage',
+          '--remote-debugging-port=9222',
+          '--remote-debugging-address=0.0.0.0',
+          '--disable-features=site-per-process',
+          '--disable-crash-reporter',
         ],
         defaultViewport: { width: 800, height: 600 }, // ברירת מחדל קטנה יותר
       },
