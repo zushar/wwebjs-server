@@ -184,7 +184,7 @@ export class ConnectService {
             );
           reject(new Error('Timed out waiting for client connection'));
         }
-      }, 60000);
+      }, 300000);
 
       client.on('loading_screen', (percent, message) => {
         this.logger.log(
@@ -238,12 +238,29 @@ export class ConnectService {
           return;
         }
         pairingCodeRequested = true;
-        newClient.ready = true;
         this.clients.set(clientId, newClient);
 
         this.logger.log(
           `QR received for ${phoneNumber}, requesting pairing code...`,
         );
+        const pairingTimeout = setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            this.logger.warn(
+              `Pairing code not entered for ${phoneNumber} within timeout period`,
+            );
+            this.clients.delete(clientId);
+            client
+              .destroy()
+              .catch((e) =>
+                this.logger.error(
+                  `Error destroying client on pairing timeout for ${phoneNumber}:`,
+                  e,
+                ),
+              );
+            reject(new Error('Pairing code not entered within timeout'));
+          }
+        }, 600000);
         void client
           .requestPairingCode(phoneNumber)
           .then(async (pairingCode: string) => {
@@ -259,7 +276,7 @@ export class ConnectService {
             );
             if (!resolved) {
               resolved = true;
-              clearTimeout(timeout);
+              clearTimeout(pairingTimeout);
               resolve({ clientId, pairingCode });
             }
           })
@@ -270,7 +287,7 @@ export class ConnectService {
             );
             if (!resolved) {
               resolved = true;
-              clearTimeout(timeout);
+              clearTimeout(pairingTimeout);
               this.clients.delete(clientId);
               client
                 .destroy()
