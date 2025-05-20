@@ -184,7 +184,7 @@ export class ConnectService {
             );
           reject(new Error('Timed out waiting for client connection'));
         }
-      }, 300000);
+      }, 600000);
 
       client.on('loading_screen', (percent, message) => {
         this.logger.log(
