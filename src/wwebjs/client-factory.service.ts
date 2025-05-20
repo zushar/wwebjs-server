@@ -22,6 +22,13 @@ export class ClientFactoryService {
           '--disable-dev-shm-usage',
           '--disable-features=site-per-process',
           '--disable-crash-reporter',
+          '--disable-extensions',
+          '--disable-background-networking',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-breakpad',
+          '--disable-extensions',
+          '--disable-translate',
         ],
         defaultViewport: { width: 800, height: 600 }, // ברירת מחדל קטנה יותר
       },
