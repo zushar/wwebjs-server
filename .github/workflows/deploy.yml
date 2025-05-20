@@ -1,4 +1,4 @@
-name: Deploy to AWS Lightsail
+name: Deploy to contabo server
 
 on:
   push:
@@ -17,9 +17,9 @@ jobs:
           echo "${{ secrets.LIGHTSAIL_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H 31.220.95.51 >> ~/.ssh/known_hosts
-      - name: Deploy to Lightsail
+      - name: Deploy to Contabo VPS
         run: |
-          ssh ubuntu@31.220.95.51 "cd ~/wwebjs-server && \
+          ssh root@31.220.95.51 "cd ~/wwebjs-server && \
             git pull && \
             sudo chmod -R 777 whatsapp-session || true && \
             docker-compose down && \
