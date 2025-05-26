@@ -139,16 +139,29 @@ export class ConnectService {
     clientType: ClientType,
   ): Promise<{ clientId: string; pairingCode?: string; message?: string }> {
     const clientId = phoneNumber;
-    this.logger.log(`Initializing WhatsApp client for: ${phoneNumber}`);
+    this.logger.log(`checking client for phone number: ${phoneNumber}`);
+
+    // אם הלקוח כבר קיים
     const clientData: ClientState | undefined = this.clients.get(clientId);
     if (clientData) {
-      this.logger.warn(`Client ${clientId} already exists. Reinitializing...`);
+      // רק אם הלקוח מוכן, נחזיר את המסר שהוא מוכן ומוסמך
+      if (clientData.ready) {
+        this.logger.log(`Client ${clientId} already exists and is ready.`);
+        return {
+          clientId: clientData.id,
+          message: 'Client already exists and is ready',
+        };
+      }
+      // אם הלקוח קיים אבל לא מוכן (עדיין בתהליך אימות)
+      this.logger.log(`Client ${clientId} exists but is still authenticating.`);
       return {
         clientId: clientData.id,
-        message: 'Client already exists and is verified',
+        message: 'Client exists and is authenticating',
       };
     }
 
+    // יצירת לקוח חדש
+    this.logger.log(`Creating new client for phone number: ${phoneNumber}`);
     const client = this.clientFactory.createClient(phoneNumber);
     const newClient: ClientState = {
       id: clientId,
@@ -164,12 +177,11 @@ export class ConnectService {
       pairingCode?: string;
       message?: string;
     }>((resolve, reject) => {
-      let resolved = false;
+      let initialResponseSent = false;
       let pairingCodeRequested = false;
 
       const timeout = setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
+        if (!initialResponseSent) {
           this.logger.error(
             `Timed out waiting for client event (ready/qr) for ${phoneNumber}`,
           );
@@ -186,98 +198,38 @@ export class ConnectService {
         }
       }, 600000);
 
-      client.on('loading_screen', (percent, message) => {
-        this.logger.log(
-          `WhatsApp loading [${clientId}]: ${percent}% - ${message || 'Loading...'}`,
-        );
-      });
-
-      client.on('ready', () => {
-        if (!resolved) {
-          resolved = true;
-          clearTimeout(timeout);
-          this.logger.log(`Client ready for ${phoneNumber}`);
-          newClient.ready = true;
-          newClient.lastActive = Date.now();
-          this.clients.set(clientId, newClient);
-
-          void this.redisClient
-            .set(
-              this.getRedisKey(clientId),
-              JSON.stringify(this.toClientMeta(newClient)),
-            )
-            .then(() => {
-              this.logger.log(
-                `Stored ready status in Redis for ${phoneNumber}`,
-              );
-              resolve({ clientId, message: 'Client is ready' });
-            })
-            .catch((error) => {
-              this.logger.error(
-                `Failed to store Redis data for ${phoneNumber}:`,
-                error,
-              );
-              // Still resolve since client is ready
-              resolve({
-                clientId,
-                message: 'Client is ready (Redis update failed)',
-              });
-            });
-        } else {
-          this.logger.warn(
-            `'ready' event received for ${phoneNumber} after promise was already resolved.`,
-          );
-        }
-      });
-
+      // כאשר מתקבל קוד QR
       client.on('qr', () => {
-        if (resolved || pairingCodeRequested) {
+        if (initialResponseSent || pairingCodeRequested) {
           this.logger.debug(
-            `Ignoring extra QR event for ${phoneNumber} (resolved: ${resolved}, requested: ${pairingCodeRequested}).`,
+            `Ignoring extra QR event for ${phoneNumber} (initial response already sent: ${initialResponseSent}, requested: ${pairingCodeRequested}).`,
           );
           return;
         }
+
         pairingCodeRequested = true;
-        newClient.ready = true;
-        this.clients.set(clientId, newClient);
 
         this.logger.log(
           `QR received for ${phoneNumber}, requesting pairing code...`,
         );
-        const pairingTimeout = setTimeout(() => {
-          if (!resolved) {
-            resolved = true;
-            this.logger.warn(
-              `Pairing code not entered for ${phoneNumber} within timeout period`,
-            );
-            this.clients.delete(clientId);
-            client
-              .destroy()
-              .catch((e) =>
-                this.logger.error(
-                  `Error destroying client on pairing timeout for ${phoneNumber}:`,
-                  e,
-                ),
-              );
-            reject(new Error('Pairing code not entered within timeout'));
-          }
-        }, 600000);
+
         void client
           .requestPairingCode(phoneNumber)
           .then(async (pairingCode: string) => {
             this.logger.log(
               `Pairing code received for ${phoneNumber}: ${pairingCode}`,
             );
+
+            // שמירת מצב הלקוח בRedis (עדיין לא מוכן)
             await this.redisClient.set(
               this.getRedisKey(clientId),
               JSON.stringify(this.toClientMeta(newClient)),
             );
-            this.logger.log(
-              `Stored unverified status in Redis for ${phoneNumber}`,
-            );
-            if (!resolved) {
-              resolved = true;
-              clearTimeout(pairingTimeout);
+
+            if (!initialResponseSent) {
+              initialResponseSent = true;
+              clearTimeout(timeout);
+              // החזרת קוד הצימוד למשתמש - השלב הראשון
               resolve({ clientId, pairingCode });
             }
           })
@@ -286,9 +238,9 @@ export class ConnectService {
               `Failed to get pairing code for ${phoneNumber}:`,
               error,
             );
-            if (!resolved) {
-              resolved = true;
-              clearTimeout(pairingTimeout);
+            if (!initialResponseSent) {
+              initialResponseSent = true;
+              clearTimeout(timeout);
               this.clients.delete(clientId);
               client
                 .destroy()
@@ -303,14 +255,124 @@ export class ConnectService {
           });
       });
 
+      // כאשר הלקוח מוכן
+      client.on('ready', () => {
+        clearTimeout(timeout);
+        this.logger.log(`Client ready event received for ${phoneNumber}`);
+
+        // הערה: אירוע ready עשוי להתקבל לפני שהלקוח באמת מוכן לשימוש.
+        // נמתין למצב טעינה של 100% או זמן מספיק ללא עדכוני טעינה.
+
+        // הגדרת משתנים למעקב אחר הטעינה לפני השימוש בהם
+        let lastLoadingUpdate = Date.now();
+        let lastLoadingPercentage = 0;
+        let readyMarked = false;
+
+        // פונקציה לסימון הלקוח כמוכן - נשתמש בה בכל מקום שבו נרצה לסמן "מוכן"
+        const markAsReady = () => {
+          // בדיקה שהלקוח לא סומן כבר כמוכן
+          if (readyMarked) {
+            return;
+          }
+          readyMarked = true;
+
+          // נקה את הטיימר וההאזנה
+          clearInterval(readyCheckInterval);
+          client.off('loading_screen', loadingHandler);
+
+          this.logger.log(
+            `Client fully loaded for ${phoneNumber}, marking as ready`,
+          );
+          newClient.ready = true;
+          newClient.lastActive = Date.now();
+          this.clients.set(clientId, newClient);
+
+          // עדכון מצב הלקוח בRedis למוכן
+          void this.redisClient
+            .set(
+              this.getRedisKey(clientId),
+              JSON.stringify(this.toClientMeta(newClient)),
+            )
+            .catch((error) => {
+              this.logger.error(
+                `Failed to store Redis data for ${phoneNumber} on ready:`,
+                error,
+              );
+            });
+
+          // אם לא שלחנו עדיין תשובה ראשונית
+          if (!initialResponseSent) {
+            initialResponseSent = true;
+            resolve({ clientId, message: 'Client is ready' });
+          }
+        };
+
+        // מאזין לאירועי טעינה
+        const loadingHandler = (percent: number, message: string) => {
+          lastLoadingUpdate = Date.now();
+          lastLoadingPercentage = percent;
+          this.logger.log(
+            `WhatsApp loading [${clientId}]: ${percent}% - ${message || 'Loading...'}`,
+          );
+
+          // אם הגענו ל-100%, נסמן כמוכן מיד
+          if (percent >= 100) {
+            this.logger.log(`Client reached 100% loading for ${phoneNumber}`);
+            markAsReady();
+          }
+        };
+
+        // הוספת מאזין זמני לאירועי טעינה
+        client.on('loading_screen', loadingHandler);
+
+        // בדיקה קבועה אם לא ראינו עדכוני טעינה חדשים זמן רב מספיק
+        // או אם אחוז הטעינה גבוה מספיק
+        const readyCheckInterval = setInterval(() => {
+          this.logger.log(
+            `Checking loading status: ${lastLoadingPercentage}%, last update: ${Date.now() - lastLoadingUpdate}ms ago`,
+          );
+
+          // בדיקה אם:
+          // 1. לא קיבלנו עדכון טעינה במשך יותר מ-5 שניות
+          // 2. אחוז הטעינה האחרון היה לפחות 95%
+          if (
+            Date.now() - lastLoadingUpdate > 5000 &&
+            lastLoadingPercentage >= 95
+          ) {
+            this.logger.log(
+              `No loading updates for 5+ seconds with ${lastLoadingPercentage}% progress, assuming client is ready`,
+            );
+            markAsReady();
+          }
+        }, 2000); // בדיקה כל 2 שניות
+
+        // להוסיף טיימר מקסימלי למקרה שלעולם לא נגיע ל-100% או לא נקבל עדכוני טעינה
+        setTimeout(() => {
+          if (!readyMarked) {
+            this.logger.warn(
+              `Maximum waiting time reached for ${phoneNumber}, marking as ready anyway`,
+            );
+            markAsReady();
+          }
+        }, 30000); // 30 שניות מקסימום לאחר אירוע ready
+      });
+
+      // אירוע הטעינה הרגיל להיות רק לרישום (ללא טיפול בסטטוס)
+      client.on('loading_screen', (percent, message) => {
+        this.logger.log(
+          `WhatsApp loading [${clientId}]: ${percent}% - ${message || 'Loading...'}`,
+        );
+      });
+
+      // אירועי שגיאה אחרים
       client.on('auth_failure', (error: unknown) => {
         this.logger.error(
           `Authentication failure for ${phoneNumber}: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
-        if (!resolved) {
-          resolved = true;
+        if (!initialResponseSent) {
+          initialResponseSent = true;
           clearTimeout(timeout);
           this.clients.delete(clientId);
           client
@@ -330,6 +392,7 @@ export class ConnectService {
         }
       });
 
+      // לוגיקת התנתקות
       client.on('disconnected', (reason) => {
         this.logger.warn(
           `Client ${phoneNumber} disconnected: ${reason}. Removing from active clients.`,
@@ -351,6 +414,7 @@ export class ConnectService {
               e,
             ),
           );
+        // שימוש בנתיב מתאים למחיקת קבצי אימות
         const authPath = '../../wwebjs_auth/session-' + phoneNumber;
         fs.rm(authPath, { recursive: true, force: true }, (err) => {
           if (err) {
@@ -372,13 +436,37 @@ export class ConnectService {
           `Failed to initialize client for ${phoneNumber}:`,
           error,
         );
-        if (!resolved) {
-          resolved = true;
+        if (!initialResponseSent) {
+          initialResponseSent = true;
           clearTimeout(timeout);
           this.clients.delete(clientId);
           reject(error instanceof Error ? error : new Error(String(error)));
         }
       });
     });
+  }
+
+  /**
+   * בדיקת סטטוס חיבור של לקוח
+   */
+  getClientStatus(phoneNumber: string): {
+    clientId: string;
+    status: string;
+    ready: boolean;
+  } {
+    const clientData = this.clients.get(phoneNumber);
+    if (!clientData) {
+      return {
+        clientId: phoneNumber,
+        status: 'not_found',
+        ready: false,
+      };
+    }
+
+    return {
+      clientId: phoneNumber,
+      status: clientData.ready ? 'ready' : 'authenticating',
+      ready: clientData.ready,
+    };
   }
 }

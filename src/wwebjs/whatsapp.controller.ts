@@ -55,12 +55,30 @@ export class WhatsAppTestController {
     return 'Test endpoint is working and returning a string';
   }
 
+  @Get('status')
+  getStatus(@Query('clientId') clientId: string): {
+    clientId: string;
+    status: string;
+    ready: boolean;
+  } {
+    this.logger.log(`endpoint getStatus hit with clientId: ${clientId}`);
+    if (!clientId) {
+      this.logger.error('clientId is required');
+      throw new BadRequestException('clientId is required');
+    }
+    const statusResult = this.connectService.getClientStatus(clientId);
+    this.logger.log(
+      `Status for clientId ${clientId}: ${JSON.stringify(statusResult)}`,
+    );
+    return statusResult;
+  }
+
   @Post('create')
   async createVerificationCode(
     @Body() dto: CreateConnectionDto,
   ): Promise<{ clientId: string; pairingCode?: string }> {
     this.logger.log(
-      `Creating verification code for phoneNumber: ${dto.phoneNumber}`,
+      `endpoint createVerificationCode hit with phoneNumber: ${dto.phoneNumber}, clientType: ${dto.clientType}`,
     );
     if (
       !dto.clientType ||
@@ -82,7 +100,7 @@ export class WhatsAppTestController {
   @Post('message/send')
   async sendMessage(@Body() dto: SendMessageDto): Promise<unknown> {
     this.logger.log(
-      `Sending message from clientId: ${dto.clientId} to recipient: ${dto.recipient}`,
+      `endpoint sendMessage hit with clientId: ${dto.clientId}, recipient: ${dto.recipient}, message: ${dto.message}`,
     );
     if (!dto.clientId || !dto.recipient || !dto.message) {
       this.logger.error('clientId, recipient, and message are required');
