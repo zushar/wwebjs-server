@@ -121,25 +121,23 @@ export class ConnectService {
     clientType: ClientType,
   ): Promise<{ clientId: string; pairingCode?: string; message?: string }> {
     const clientId = phoneNumber;
-    this.logger.log(`checking clients for phone number: ${phoneNumber}`);
+    this.logger.log(`Checking clients for phone number: ${phoneNumber}`);
 
     const clientData: ClientState | undefined = this.clients.get(clientId);
-    if (clientData) {
-      if (clientData.ready) {
-        this.logger.log(`Client ${clientId} already exists and is ready.`);
-        return {
-          clientId: clientData.id,
-          message: 'Client already exists and is ready',
-        };
-      }
+    if (clientData?.ready) {
+      this.logger.log(`Client ${clientId} already exists and is ready.`);
+      return {
+        clientId: clientData.id,
+        message: 'Client already exists and is ready',
+      };
     }
 
     this.logger.log(`Creating new client for phone number: ${phoneNumber}`);
-    const time = Date.now();
-    this.logger.log(new Date(time));
+    const startTime = Date.now();
     const client = this.clientFactory.createClient(phoneNumber);
-    const lastTime = Date.now();
-    this.logger.log(`Client created in: ${lastTime - time} ms`);
+    const creationTime = Date.now() - startTime;
+    this.logger.log(`Client created in: ${creationTime} ms`);
+
     const newClient: ClientState = {
       id: clientId,
       client: client,
@@ -154,119 +152,114 @@ export class ConnectService {
       pairingCode?: string;
       message?: string;
     }>((resolve, reject) => {
-      let initialResponseSent = false;
-      let pairingCodeInit = '';
+      let isResolved = false;
+      let pairingCode = '';
 
-      const timeout = setTimeout(() => {
-        this.logger.warn(
-          `Timeout reached while waiting for client event (ready/qr) for ${phoneNumber}`,
-        );
-        if (!initialResponseSent) {
-          this.logger.error(
-            `Timed out waiting for client event (ready/qr) for ${phoneNumber}`,
-          );
+      const cleanup = () => {
+        if (timeout) clearTimeout(timeout);
+        client.removeAllListeners('qr');
+        client.removeAllListeners('ready');
+        client.removeAllListeners('loading_screen');
+        client.removeAllListeners('auth_failure');
+      };
+
+      const safeResolve = (result: {
+        clientId: string;
+        pairingCode?: string;
+        message?: string;
+      }) => {
+        if (!isResolved) {
+          isResolved = true;
+          cleanup();
+          resolve(result);
+        }
+      };
+
+      const safeReject = (error: Error) => {
+        if (!isResolved) {
+          isResolved = true;
+          cleanup();
           this.clients.delete(clientId);
           client
             .destroy()
-            .catch((e) =>
+            .catch((destroyError) =>
               this.logger.error(
-                `Error destroying client on timeout for ${phoneNumber}:`,
-                e,
+                `Error destroying client for ${phoneNumber}:`,
+                destroyError,
               ),
             );
-          reject(
-            new Error(`Timed out waiting for client ${clientId} connection`),
-          );
+          reject(error);
         }
+      };
+
+      const timeout = setTimeout(() => {
+        this.logger.warn(
+          `Timeout reached while waiting for client event for ${phoneNumber}`,
+        );
+        safeReject(
+          new Error(`Timed out waiting for client ${clientId} connection`),
+        );
       }, 600000);
+
       client.on('qr', () => {
-        if (initialResponseSent) {
-          this.logger.debug(
-            `Ignoring extra QR event for ${phoneNumber} (initial response already sent: ${initialResponseSent}).`,
-          );
-          return;
-        }
-        initialResponseSent = true;
         this.logger.log(
           `QR received for ${phoneNumber}, requesting pairing code...`,
         );
-        const time2 = Date.now();
-        this.logger.log(new Date(time));
-        void client
+        const pairingStartTime = Date.now();
+
+        client
           .requestPairingCode(phoneNumber)
-          .then(async (pairingCode: string) => {
-            pairingCodeInit = pairingCode;
+          .then(async (code) => {
+            pairingCode = code;
+            const pairingTime = Date.now() - pairingStartTime;
             this.logger.log(
-              `Pairing code received for ${phoneNumber}: ${pairingCode}`,
+              `Pairing code received for ${phoneNumber}: ${pairingCode} (${pairingTime} ms)`,
             );
-            const beforeStoreTime = Date.now();
-            this.logger.log(
-              `time for pairing code from meta: ${beforeStoreTime - time2} ms`,
-            );
+
+            // Store client meta in Redis
+            const storeStartTime = Date.now();
             await this.redisClient.set(
               this.getRedisKey(clientId),
               JSON.stringify(this.toClientMeta(newClient)),
             );
+            const storeTime = Date.now() - storeStartTime;
             this.logger.log(
-              `initialResponseSent value in qr event: ${initialResponseSent}`,
+              `Client meta stored in Redis for ${phoneNumber} (${storeTime} ms)`,
             );
-            if (initialResponseSent) {
-              this.logger.log(
-                `Storing client meta in Redis for ${phoneNumber}: ${JSON.stringify(
-                  this.toClientMeta(newClient),
-                )}`,
-              );
-              clearTimeout(timeout);
-              const afterStoreTime = Date.now();
-              this.logger.log(
-                `time for storing client meta in Redis: ${afterStoreTime - beforeStoreTime} ms and the qr event is done`,
-              );
-              // resolve({ clientId, pairingCode });
-            }
           })
-          .catch((error: unknown) => {
+          .catch((error) => {
             this.logger.error(
               `Failed to get pairing code for ${phoneNumber}:`,
               error,
             );
-            if (!initialResponseSent) {
-              initialResponseSent = true;
-              clearTimeout(timeout);
-              this.clients.delete(clientId);
-              client
-                .destroy()
-                .catch((e) =>
-                  this.logger.error(
-                    `Error destroying client on pairing code failure for ${phoneNumber}:`,
-                    e,
-                  ),
-                );
-              reject(error instanceof Error ? error : new Error(String(error)));
-            }
+            safeReject(
+              error instanceof Error ? error : new Error(String(error)),
+            );
           });
       });
 
       client.on('ready', () => {
-        clearTimeout(timeout);
-        this.logger.log(`this is initialResponseSent: ${initialResponseSent}`);
         this.logger.log(`Client ready for ${phoneNumber}`);
         newClient.ready = true;
         newClient.lastActive = Date.now();
         this.clients.set(clientId, newClient);
-        client.removeAllListeners('qr');
-        client.removeAllListeners('loading_screen');
-        if (!initialResponseSent) {
-          resolve({
-            clientId,
-            message: 'Client is ready and authenticated',
-          });
-        } else {
-          resolve({
-            clientId,
-            pairingCode: pairingCodeInit,
-            message: 'Client is ready and authenticated with pairing code',
-          });
+
+        const result: {
+          clientId: string;
+          pairingCode?: string;
+          message: string;
+        } = {
+          clientId,
+          message: pairingCode
+            ? 'Client is ready and authenticated with pairing code'
+            : 'Client is ready and authenticated',
+        };
+
+        if (pairingCode) {
+          result.pairingCode = pairingCode;
         }
+
+        safeResolve(result);
       });
 
       client.on('loading_screen', (percent, message) => {
@@ -276,84 +269,73 @@ export class ConnectService {
       });
 
       client.on('auth_failure', (error: unknown) => {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
         this.logger.error(
-          `Authentication failure for ${phoneNumber}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `Authentication failure for ${phoneNumber}: ${errorMessage}`,
         );
-        if (!initialResponseSent) {
-          initialResponseSent = true;
-          clearTimeout(timeout);
-          this.clients.delete(clientId);
-          client
-            .destroy()
-            .catch((e) =>
-              this.logger.error(
-                `Error destroying client on auth failure for ${phoneNumber}:`,
-                e,
-              ),
-            );
-          reject(
-            new Error(
-              'Authentication failure: ' +
-                (error instanceof Error ? error.message : String(error)),
-            ),
-          );
-        }
+        safeReject(new Error(`Authentication failure: ${errorMessage}`));
       });
-      // add reject handler for disconnection
+
       client.on('disconnected', (reason) => {
         this.logger.warn(
-          `Client ${phoneNumber} disconnected: ${reason}. Removing from active clients.`,
+          `Client ${phoneNumber} disconnected: ${reason}. Cleaning up...`,
         );
-        this.clients.delete(clientId);
-        client
-          .destroy()
-          .catch((e) =>
-            this.logger.error(
-              `Error destroying client on disconnect for ${phoneNumber}:`,
-              e,
-            ),
-          );
+
+        // Clean up Redis entry first
         this.redisClient
           .del(this.getRedisKey(clientId))
-          .catch((e) =>
+          .then(() => {
+            this.logger.log(`Redis entry deleted for ${phoneNumber}`);
+          })
+          .catch((error) => {
             this.logger.error(
-              `Error deleting Redis entry for ${phoneNumber} on disconnect:`,
-              e,
-            ),
-          );
-        const authPath = '../../wwebjs_auth/session-' + phoneNumber;
-        fs.rm(authPath, { recursive: true, force: true }, (err) => {
-          if (err) {
-            this.logger.error(
-              `Error deleting auth files for ${phoneNumber}:`,
-              err,
+              `Error deleting Redis entry for ${phoneNumber}:`,
+              error,
             );
-          } else {
+          })
+          .then(() => {
+            // Clean up auth files
+            const authPath = '../../wwebjs_auth/session-' + phoneNumber;
+            return fs.promises.rm(authPath, { recursive: true, force: true });
+          })
+          .then(() => {
             this.logger.log(
               `Auth files deleted for ${phoneNumber} successfully.`,
             );
-          }
-          resolve({
-            clientId,
-            message: `Client disconnected and removed: ${reason}`,
+          })
+          .catch((error) => {
+            this.logger.error(
+              `Error deleting auth files for ${phoneNumber}:`,
+              error,
+            );
+          })
+          .finally(() => {
+            // Always clean up the client from memory
+            this.clients.delete(clientId);
+
+            // Only resolve if this is an expected disconnection after setup
+            if (newClient.ready) {
+              safeResolve({
+                clientId,
+                message: `Client disconnected and removed: ${reason}`,
+              });
+            } else {
+              safeReject(
+                new Error(`Client disconnected during setup: ${reason}`),
+              );
+            }
           });
-        });
       });
 
+      // Start client initialization
       this.logger.log(`Starting client initialization for ${phoneNumber}...`);
       client.initialize().catch((error) => {
         this.logger.error(
           `Failed to initialize client for ${phoneNumber}:`,
           error,
         );
-        if (!initialResponseSent) {
-          initialResponseSent = true;
-          clearTimeout(timeout);
-          this.clients.delete(clientId);
-          reject(error instanceof Error ? error : new Error(String(error)));
-        }
+        safeReject(error instanceof Error ? error : new Error(String(error)));
       });
     });
   }

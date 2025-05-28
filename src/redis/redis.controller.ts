@@ -1,6 +1,6 @@
 import { Controller, Get, Inject, Query } from '@nestjs/common';
 import Redis from 'ioredis';
-import { REDIS_CLIENT } from './redis.module'; // עדכן בהתאם למיקום
+import { REDIS_CLIENT } from './redis.module';
 
 @Controller('redis-test')
 export class RedisTestController {
