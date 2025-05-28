@@ -205,8 +205,15 @@ export class ConnectService {
               this.getRedisKey(clientId),
               JSON.stringify(this.toClientMeta(newClient)),
             );
-
+            this.logger.log(
+              `initialResponseSent value in qr event: ${initialResponseSent}`,
+            );
             if (!initialResponseSent) {
+              this.logger.log(
+                `Storing client meta in Redis for ${phoneNumber}: ${JSON.stringify(
+                  this.toClientMeta(newClient),
+                )}`,
+              );
               initialResponseSent = true;
               clearTimeout(timeout);
               const afterStoreTime = Date.now();
