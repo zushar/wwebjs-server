@@ -157,10 +157,10 @@ export class ConnectService {
         if (initTimeout) clearTimeout(initTimeout);
         if (pairingCodeTimeout) clearTimeout(pairingCodeTimeout);
         // Only remove specific listeners, not ALL listeners
-        client.removeAllListeners('qr');
-        client.removeAllListeners('ready');
-        client.removeAllListeners('loading_screen');
-        client.removeAllListeners('auth_failure');
+        // client.removeAllListeners('qr');
+        // client.removeAllListeners('ready');
+        // client.removeAllListeners('loading_screen');
+        // client.removeAllListeners('auth_failure');
         // DO NOT remove 'disconnected' listener - it's needed for lifecycle management
       };
 
@@ -290,15 +290,33 @@ export class ConnectService {
         newClient.ready = true;
         newClient.lastActive = Date.now();
         this.clients.set(clientId, newClient);
+
+        // תמיד נקה את הtimeout אם קיים
         if (pairingCodeTimeout) {
+          this.logger.log(
+            `Clearing pairing code timeout for ${phoneNumber} - client is ready`,
+          );
           clearTimeout(pairingCodeTimeout);
           pairingCodeTimeout = null;
         }
-        if (!pairingCode && !isResolved) {
+
+        // אם Promise עדיין לא resolved (re-establishment case)
+        if (!isResolved) {
+          client.removeAllListeners('qr');
+          client.removeAllListeners('ready');
+          client.removeAllListeners('loading_screen');
+          client.removeAllListeners('auth_failure');
           safeResolve({
             clientId,
-            message: 'Client is ready and authenticated (re-established)',
+            message: pairingCode
+              ? 'Client is ready and authenticated with pairing code'
+              : 'Client is ready and authenticated (re-established)',
           });
+        } else {
+          // אם Promise כבר resolved (pairing code case) - רק לוג
+          this.logger.log(
+            `Client ${phoneNumber} is now ready (Promise already resolved)`,
+          );
         }
       });
 
@@ -306,6 +324,9 @@ export class ConnectService {
         this.logger.log(
           `WhatsApp loading [${clientId}]: ${percent}% - ${message || 'Loading...'}`,
         );
+      });
+      client.on('authenticated', () => {
+        this.logger.log(`✅ Client ${phoneNumber} authenticated successfully`);
       });
 
       client.on('auth_failure', (error: unknown) => {
