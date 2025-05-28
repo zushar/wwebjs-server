@@ -173,10 +173,11 @@ export class ConnectService {
                 e,
               ),
             );
-          reject(new Error('Timed out waiting for client connection'));
+          reject(
+            new Error(`Timed out waiting for client ${clientId} connection`),
+          );
         }
       }, 600000);
-      // add entervel for qr received
       client.on('qr', () => {
         if (initialResponseSent) {
           this.logger.debug(
