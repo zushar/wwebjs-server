@@ -133,10 +133,7 @@ export class ConnectService {
     }
 
     this.logger.log(`Creating new client for phone number: ${phoneNumber}`);
-    const startTime = Date.now();
     const client = this.clientFactory.createClient(phoneNumber);
-    const creationTime = Date.now() - startTime;
-    this.logger.log(`Client created in: ${creationTime} ms`);
 
     const newClient: ClientState = {
       id: clientId,
@@ -154,13 +151,17 @@ export class ConnectService {
     }>((resolve, reject) => {
       let isResolved = false;
       let pairingCode = '';
+      let pairingCodeTimeout: NodeJS.Timeout | null = null;
 
       const cleanup = () => {
-        if (timeout) clearTimeout(timeout);
+        if (initTimeout) clearTimeout(initTimeout);
+        if (pairingCodeTimeout) clearTimeout(pairingCodeTimeout);
+        // Only remove specific listeners, not ALL listeners
         client.removeAllListeners('qr');
         client.removeAllListeners('ready');
         client.removeAllListeners('loading_screen');
         client.removeAllListeners('auth_failure');
+        // DO NOT remove 'disconnected' listener - it's needed for lifecycle management
       };
 
       const safeResolve = (result: {
@@ -179,6 +180,8 @@ export class ConnectService {
         if (!isResolved) {
           isResolved = true;
           cleanup();
+          // Only remove disconnect listener when rejecting (client setup failed)
+          client.removeAllListeners('disconnected');
           this.clients.delete(clientId);
           client
             .destroy()
@@ -192,39 +195,83 @@ export class ConnectService {
         }
       };
 
-      const timeout = setTimeout(() => {
-        this.logger.warn(
-          `Timeout reached while waiting for client event for ${phoneNumber}`,
-        );
+      // Overall timeout for the entire process
+      const initTimeout = setTimeout(() => {
+        this.logger.warn(`Overall timeout reached for client ${phoneNumber}`);
         safeReject(
           new Error(`Timed out waiting for client ${clientId} connection`),
         );
-      }, 600000);
+      }, 600000); // 10 minutes
 
       client.on('qr', () => {
         this.logger.log(
           `QR received for ${phoneNumber}, requesting pairing code...`,
         );
-        const pairingStartTime = Date.now();
 
         client
           .requestPairingCode(phoneNumber)
           .then(async (code) => {
             pairingCode = code;
-            const pairingTime = Date.now() - pairingStartTime;
             this.logger.log(
-              `Pairing code received for ${phoneNumber}: ${pairingCode} (${pairingTime} ms)`,
+              `Pairing code received for ${phoneNumber}: ${pairingCode}`,
             );
 
             // Store client meta in Redis
-            const storeStartTime = Date.now();
             await this.redisClient.set(
               this.getRedisKey(clientId),
               JSON.stringify(this.toClientMeta(newClient)),
             );
-            const storeTime = Date.now() - storeStartTime;
+
+            safeResolve({
+              clientId,
+              pairingCode: pairingCode,
+              message:
+                'Pairing code generated - waiting for user to enter code',
+            });
+
+            pairingCodeTimeout = setTimeout(() => {
+              this.logger.warn(
+                `Pairing code timeout for ${phoneNumber} - code was never entered`,
+              );
+
+              this.logger.log(
+                `Cleaning up client ${phoneNumber} due to pairing code timeout`,
+              );
+
+              // Clean up the expired client
+              this.clients.delete(clientId);
+              client.removeAllListeners();
+              client
+                .destroy()
+                .catch((error) =>
+                  this.logger.error(
+                    `Error destroying expired client for ${phoneNumber}:`,
+                    error,
+                  ),
+                );
+
+              this.redisClient
+                .del(this.getRedisKey(clientId))
+                .catch((error) =>
+                  this.logger.error(
+                    `Error deleting Redis entry for expired client ${phoneNumber}:`,
+                    error,
+                  ),
+                );
+
+              const authPath = '../../wwebjs_auth/session-' + phoneNumber;
+              fs.promises
+                .rm(authPath, { recursive: true, force: true })
+                .catch((error) =>
+                  this.logger.error(
+                    `Error deleting auth files for expired client ${phoneNumber}:`,
+                    error,
+                  ),
+                );
+            }, 360000); // 6 minutes for pairing code entry
+
             this.logger.log(
-              `Client meta stored in Redis for ${phoneNumber} (${storeTime} ms)`,
+              `Pairing code generated for ${phoneNumber}. Waiting for user to enter code...`,
             );
           })
           .catch((error) => {
@@ -243,23 +290,16 @@ export class ConnectService {
         newClient.ready = true;
         newClient.lastActive = Date.now();
         this.clients.set(clientId, newClient);
-
-        const result: {
-          clientId: string;
-          pairingCode?: string;
-          message: string;
-        } = {
-          clientId,
-          message: pairingCode
-            ? 'Client is ready and authenticated with pairing code'
-            : 'Client is ready and authenticated',
-        };
-
-        if (pairingCode) {
-          result.pairingCode = pairingCode;
+        if (pairingCodeTimeout) {
+          clearTimeout(pairingCodeTimeout);
+          pairingCodeTimeout = null;
         }
-
-        safeResolve(result);
+        if (!pairingCode && !isResolved) {
+          safeResolve({
+            clientId,
+            message: 'Client is ready and authenticated (re-established)',
+          });
+        }
       });
 
       client.on('loading_screen', (percent, message) => {
@@ -282,20 +322,15 @@ export class ConnectService {
           `Client ${phoneNumber} disconnected: ${reason}. Cleaning up...`,
         );
 
-        // Clean up Redis entry first
         this.redisClient
           .del(this.getRedisKey(clientId))
-          .then(() => {
-            this.logger.log(`Redis entry deleted for ${phoneNumber}`);
-          })
-          .catch((error) => {
+          .catch((error) =>
             this.logger.error(
               `Error deleting Redis entry for ${phoneNumber}:`,
               error,
-            );
-          })
+            ),
+          )
           .then(() => {
-            // Clean up auth files
             const authPath = '../../wwebjs_auth/session-' + phoneNumber;
             return fs.promises.rm(authPath, { recursive: true, force: true });
           })
@@ -311,24 +346,25 @@ export class ConnectService {
             );
           })
           .finally(() => {
-            // Always clean up the client from memory
             this.clients.delete(clientId);
 
-            // Only resolve if this is an expected disconnection after setup
-            if (newClient.ready) {
+            if (!isResolved) {
+              // This handles both scenarios:
+              // 1. New authentication where user disconnected during setup
+              // 2. Re-establishment where user had disconnected from WhatsApp
               safeResolve({
                 clientId,
                 message: `Client disconnected and removed: ${reason}`,
               });
             } else {
-              safeReject(
-                new Error(`Client disconnected during setup: ${reason}`),
+              // Post-setup disconnection (client was successfully established)
+              this.logger.log(
+                `Established client ${phoneNumber} disconnected: ${reason}`,
               );
             }
           });
       });
 
-      // Start client initialization
       this.logger.log(`Starting client initialization for ${phoneNumber}...`);
       client.initialize().catch((error) => {
         this.logger.error(
