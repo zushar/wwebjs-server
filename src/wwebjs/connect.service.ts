@@ -155,6 +155,7 @@ export class ConnectService {
       message?: string;
     }>((resolve, reject) => {
       let initialResponseSent = false;
+      let pairingCodeInit = '';
 
       const timeout = setTimeout(() => {
         this.logger.warn(
@@ -194,6 +195,7 @@ export class ConnectService {
         void client
           .requestPairingCode(phoneNumber)
           .then(async (pairingCode: string) => {
+            pairingCodeInit = pairingCode;
             this.logger.log(
               `Pairing code received for ${phoneNumber}: ${pairingCode}`,
             );
@@ -208,19 +210,18 @@ export class ConnectService {
             this.logger.log(
               `initialResponseSent value in qr event: ${initialResponseSent}`,
             );
-            if (!initialResponseSent) {
+            if (initialResponseSent) {
               this.logger.log(
                 `Storing client meta in Redis for ${phoneNumber}: ${JSON.stringify(
                   this.toClientMeta(newClient),
                 )}`,
               );
-              initialResponseSent = true;
               clearTimeout(timeout);
               const afterStoreTime = Date.now();
               this.logger.log(
-                `time for storing client meta in Redis: ${afterStoreTime - beforeStoreTime} ms`,
+                `time for storing client meta in Redis: ${afterStoreTime - beforeStoreTime} ms and the qr event is done`,
               );
-              resolve({ clientId, pairingCode });
+              // resolve({ clientId, pairingCode });
             }
           })
           .catch((error: unknown) => {
@@ -258,6 +259,12 @@ export class ConnectService {
           resolve({
             clientId,
             message: 'Client is ready and authenticated',
+          });
+        } else {
+          resolve({
+            clientId,
+            pairingCode: pairingCodeInit,
+            message: 'Client is ready and authenticated with pairing code',
           });
         }
       });

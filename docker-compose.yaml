@@ -1,36 +1,46 @@
-services:
-    redis:
-      image: redis:latest # השתמש באימג' הרשמי של Redis (אפשר לציין גרסה ספציפית, למשל redis:7)
-      container_name: redis-wwebjs # שם ייחודי לקונטיינר
-      ports:
-        - "6379:6379" # מיפוי פורט 6379 מהמחשב המארח לקונטיינר
-      volumes:
-        - redis_data:/data # מיפוי Volume בשם redis_data לתיקיית הנתונים של Redis בתוך הקונטיינר
-      restart: always # הגדרה שהקונטיינר יופעל מחדש אוטומטית במקרה של נפילה או הפעלה מחדש של Docker
+version: '3.8'
 
-    app:
-      build:
-        context: .
-        dockerfile: Dockerfile
-      container_name: whatsapp-cluster
-      ports:
-        - "3000:3000"
-      develop:
-        watch:
-        - path: ./src  # Path to watch
-          target: /app/src  # Where to sync in container
-          action: sync  # Add this line (options: sync, rebuild, sync+restart)
-      depends_on:
-        - redis
-      environment:
-        - REDIS_HOST=redis
-        - REDIS_PORT=6379
-      restart: always
-      volumes:
-        - ./whatsapp-session:/usr/src/app/whatsapp-session
+services:
+  redis:
+    image: redis:latest
+    container_name: redis-wwebjs
+    ports:
+      - "127.0.0.1:6379:6379"  # נגיש רק ל-localhost
+    volumes:
+      - redis_data:/data
+    restart: always
+    networks:
+      - internal-net  # רשת משותפת
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: whatsapp-cluster
+    ports:
+      - "3000:3000"
+    develop:
+      watch:
+        - path: ./src
+          target: /app/src
+          action: sync
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis  # חשוב: השם הזה הוא שם הקונטיינר
+      - REDIS_PORT=6379
+    restart: always
+    volumes:
+      - ./whatsapp-session:/usr/src/app/whatsapp-session
+    networks:
+      - internal-net  # גם כאן
 
 volumes:
   redis_data:
     driver: local
   whatsapp_sessions:
     driver: local
+
+networks:
+  internal-net:
+    driver: bridge
