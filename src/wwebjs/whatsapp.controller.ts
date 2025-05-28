@@ -10,6 +10,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { ClientType } from 'src/wwebjs/client-meta.type';
+import WAWebJS from 'whatsapp-web.js';
 import { ConnectService } from './connect.service';
 import { WwebjsServices } from './wwebjs.services';
 
@@ -98,7 +99,7 @@ export class WhatsAppTestController {
   }
 
   @Post('message/send')
-  async sendMessage(@Body() dto: SendMessageDto): Promise<unknown> {
+  async sendMessage(@Body() dto: SendMessageDto): Promise<WAWebJS.Message> {
     this.logger.log(
       `endpoint sendMessage hit with clientId: ${dto.clientId}, recipient: ${dto.recipient}, message: ${dto.message}`,
     );
