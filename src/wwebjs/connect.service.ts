@@ -2,7 +2,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import * as fs from 'fs';
 import Redis from 'ioredis';
-import { Client } from 'whatsapp-web.js';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { ClientFactoryService } from './client-factory.service';
 import { ClientMeta, ClientState, ClientType } from './client-meta.type';
@@ -74,29 +73,12 @@ export class ConnectService {
   }
 
   /**
-   * Retrieves the active WhatsApp client instance.
+   * Retrieves the active WhatsApp client instance from memory.
    * Throws an error if the client is not found or not ready.
    */
-  getClient(phoneNumber: string): {
-    client: Client;
-    ready: boolean;
-  } {
+  getClient(phoneNumber: string): ClientState | undefined {
     const clientData = this.clients.get(phoneNumber);
-    if (!clientData) {
-      const errorMsg = `Client for phone number ${phoneNumber} not found in memory`;
-      this.logger.error(errorMsg);
-      throw new Error(errorMsg);
-    }
-    if (!clientData.ready) {
-      const errorMsg = `Client for phone number ${phoneNumber} is not ready`;
-      this.logger.error(errorMsg);
-      throw new Error(errorMsg);
-    }
-    this.logger.log(`Client ${phoneNumber} found in memory and ready.`);
-    return {
-      client: clientData.client,
-      ready: clientData.ready,
-    };
+    return clientData;
   }
 
   removeClient(phoneNumber: string): void {
@@ -139,17 +121,25 @@ export class ConnectService {
     clientType: ClientType,
   ): Promise<{ clientId: string; pairingCode?: string; message?: string }> {
     const clientId = phoneNumber;
-    this.logger.log(`Initializing WhatsApp client for: ${phoneNumber}`);
+    this.logger.log(`checking clients for phone number: ${phoneNumber}`);
+
     const clientData: ClientState | undefined = this.clients.get(clientId);
     if (clientData) {
-      this.logger.warn(`Client ${clientId} already exists. Reinitializing...`);
-      return {
-        clientId: clientData.id,
-        message: 'Client already exists and is verified',
-      };
+      if (clientData.ready) {
+        this.logger.log(`Client ${clientId} already exists and is ready.`);
+        return {
+          clientId: clientData.id,
+          message: 'Client already exists and is ready',
+        };
+      }
     }
 
+    this.logger.log(`Creating new client for phone number: ${phoneNumber}`);
+    const time = Date.now();
+    this.logger.log(new Date(time));
     const client = this.clientFactory.createClient(phoneNumber);
+    const lastTime = Date.now();
+    this.logger.log(`Client created in: ${lastTime - time} ms`);
     const newClient: ClientState = {
       id: clientId,
       client: client,
@@ -164,12 +154,13 @@ export class ConnectService {
       pairingCode?: string;
       message?: string;
     }>((resolve, reject) => {
-      let resolved = false;
-      let pairingCodeRequested = false;
+      let initialResponseSent = false;
 
       const timeout = setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
+        this.logger.warn(
+          `Timeout reached while waiting for client event (ready/qr) for ${phoneNumber}`,
+        );
+        if (!initialResponseSent) {
           this.logger.error(
             `Timed out waiting for client event (ready/qr) for ${phoneNumber}`,
           );
@@ -182,102 +173,46 @@ export class ConnectService {
                 e,
               ),
             );
-          reject(new Error('Timed out waiting for client connection'));
-        }
-      }, 600000);
-
-      client.on('loading_screen', (percent, message) => {
-        this.logger.log(
-          `WhatsApp loading [${clientId}]: ${percent}% - ${message || 'Loading...'}`,
-        );
-      });
-
-      client.on('ready', () => {
-        if (!resolved) {
-          resolved = true;
-          clearTimeout(timeout);
-          this.logger.log(`Client ready for ${phoneNumber}`);
-          newClient.ready = true;
-          newClient.lastActive = Date.now();
-          this.clients.set(clientId, newClient);
-
-          void this.redisClient
-            .set(
-              this.getRedisKey(clientId),
-              JSON.stringify(this.toClientMeta(newClient)),
-            )
-            .then(() => {
-              this.logger.log(
-                `Stored ready status in Redis for ${phoneNumber}`,
-              );
-              resolve({ clientId, message: 'Client is ready' });
-            })
-            .catch((error) => {
-              this.logger.error(
-                `Failed to store Redis data for ${phoneNumber}:`,
-                error,
-              );
-              // Still resolve since client is ready
-              resolve({
-                clientId,
-                message: 'Client is ready (Redis update failed)',
-              });
-            });
-        } else {
-          this.logger.warn(
-            `'ready' event received for ${phoneNumber} after promise was already resolved.`,
+          reject(
+            new Error(`Timed out waiting for client ${clientId} connection`),
           );
         }
-      });
-
+      }, 600000);
       client.on('qr', () => {
-        if (resolved || pairingCodeRequested) {
+        if (initialResponseSent) {
           this.logger.debug(
-            `Ignoring extra QR event for ${phoneNumber} (resolved: ${resolved}, requested: ${pairingCodeRequested}).`,
+            `Ignoring extra QR event for ${phoneNumber} (initial response already sent: ${initialResponseSent}).`,
           );
           return;
         }
-        pairingCodeRequested = true;
-        newClient.ready = true;
-        this.clients.set(clientId, newClient);
-
+        initialResponseSent = true;
         this.logger.log(
           `QR received for ${phoneNumber}, requesting pairing code...`,
         );
-        const pairingTimeout = setTimeout(() => {
-          if (!resolved) {
-            resolved = true;
-            this.logger.warn(
-              `Pairing code not entered for ${phoneNumber} within timeout period`,
-            );
-            this.clients.delete(clientId);
-            client
-              .destroy()
-              .catch((e) =>
-                this.logger.error(
-                  `Error destroying client on pairing timeout for ${phoneNumber}:`,
-                  e,
-                ),
-              );
-            reject(new Error('Pairing code not entered within timeout'));
-          }
-        }, 600000);
+        const time2 = Date.now();
+        this.logger.log(new Date(time));
         void client
           .requestPairingCode(phoneNumber)
           .then(async (pairingCode: string) => {
             this.logger.log(
               `Pairing code received for ${phoneNumber}: ${pairingCode}`,
             );
+            const beforeStoreTime = Date.now();
+            this.logger.log(
+              `time for pairing code from meta: ${beforeStoreTime - time2} ms`,
+            );
             await this.redisClient.set(
               this.getRedisKey(clientId),
               JSON.stringify(this.toClientMeta(newClient)),
             );
-            this.logger.log(
-              `Stored unverified status in Redis for ${phoneNumber}`,
-            );
-            if (!resolved) {
-              resolved = true;
-              clearTimeout(pairingTimeout);
+
+            if (!initialResponseSent) {
+              initialResponseSent = true;
+              clearTimeout(timeout);
+              const afterStoreTime = Date.now();
+              this.logger.log(
+                `time for storing client meta in Redis: ${afterStoreTime - beforeStoreTime} ms`,
+              );
               resolve({ clientId, pairingCode });
             }
           })
@@ -286,9 +221,9 @@ export class ConnectService {
               `Failed to get pairing code for ${phoneNumber}:`,
               error,
             );
-            if (!resolved) {
-              resolved = true;
-              clearTimeout(pairingTimeout);
+            if (!initialResponseSent) {
+              initialResponseSent = true;
+              clearTimeout(timeout);
               this.clients.delete(clientId);
               client
                 .destroy()
@@ -303,14 +238,37 @@ export class ConnectService {
           });
       });
 
+      client.on('ready', () => {
+        clearTimeout(timeout);
+        this.logger.log(`this is initialResponseSent: ${initialResponseSent}`);
+        this.logger.log(`Client ready for ${phoneNumber}`);
+        newClient.ready = true;
+        newClient.lastActive = Date.now();
+        this.clients.set(clientId, newClient);
+        client.removeAllListeners('qr');
+        client.removeAllListeners('loading_screen');
+        if (!initialResponseSent) {
+          resolve({
+            clientId,
+            message: 'Client is ready and authenticated',
+          });
+        }
+      });
+
+      client.on('loading_screen', (percent, message) => {
+        this.logger.log(
+          `WhatsApp loading [${clientId}]: ${percent}% - ${message || 'Loading...'}`,
+        );
+      });
+
       client.on('auth_failure', (error: unknown) => {
         this.logger.error(
           `Authentication failure for ${phoneNumber}: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
-        if (!resolved) {
-          resolved = true;
+        if (!initialResponseSent) {
+          initialResponseSent = true;
           clearTimeout(timeout);
           this.clients.delete(clientId);
           client
@@ -329,7 +287,7 @@ export class ConnectService {
           );
         }
       });
-
+      // add reject handler for disconnection
       client.on('disconnected', (reason) => {
         this.logger.warn(
           `Client ${phoneNumber} disconnected: ${reason}. Removing from active clients.`,
@@ -363,6 +321,10 @@ export class ConnectService {
               `Auth files deleted for ${phoneNumber} successfully.`,
             );
           }
+          resolve({
+            clientId,
+            message: `Client disconnected and removed: ${reason}`,
+          });
         });
       });
 
@@ -372,13 +334,37 @@ export class ConnectService {
           `Failed to initialize client for ${phoneNumber}:`,
           error,
         );
-        if (!resolved) {
-          resolved = true;
+        if (!initialResponseSent) {
+          initialResponseSent = true;
           clearTimeout(timeout);
           this.clients.delete(clientId);
           reject(error instanceof Error ? error : new Error(String(error)));
         }
       });
     });
+  }
+
+  /**
+   * Retrieves the status of a client by phone number.
+   */
+  getClientStatus(phoneNumber: string): {
+    clientId: string;
+    status: string;
+    ready: boolean;
+  } {
+    const clientData = this.clients.get(phoneNumber);
+    if (!clientData) {
+      return {
+        clientId: phoneNumber,
+        status: 'not_found',
+        ready: false,
+      };
+    }
+
+    return {
+      clientId: phoneNumber,
+      status: clientData.ready ? 'ready' : 'authenticating',
+      ready: clientData.ready,
+    };
   }
 }
