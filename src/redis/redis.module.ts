@@ -2,6 +2,7 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
+import { RedisTestController } from './redis.controller';
 
 // Define injection token
 export const REDIS_CLIENT = 'REDIS_CLIENT';
@@ -23,6 +24,8 @@ export const REDIS_CLIENT = 'REDIS_CLIENT';
       inject: [ConfigService], // Inject ConfigService into useFactory
     },
   ],
+  controllers:
+    process.env.NODE_ENV !== 'production' ? [RedisTestController] : [], // Conditionally include RedisTestController
   exports: [REDIS_CLIENT], // Export the token for injection in other modules
 })
 export class RedisModule {}
