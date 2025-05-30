@@ -1,0 +1,160 @@
+### WhatsApp API Testing Guide
+# This file contains all endpoints to interact with your WhatsApp API service
+# The authentication flow is:
+# 1. Create connection -> 2. Get pairing code -> 3. Enter code on device -> 4. Connection established
+
+# Then select the environment using the REST Client plugin's environment selector
+# (by default in the bottom right of VS Code when viewing a .http file)
+
+@sessionId = user1
+@timestamp = {{timestamp}}
+### ====== CONNECTION MANAGEMENT ======
+
+### 1. Create a new WhatsApp connection
+# First step: create a session with your phone number
+POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}
+Content-Type: application/json
+
+{
+  "phoneNumber": "{{phoneNumber}}"
+}
+
+### 2. Get pairing code for a session
+# After creating a connection, get the pairing code to enter on your device
+GET {{baseUrl}}/whatsapp/sessions/{{sessionId}}/pairing-code
+
+### 3. Check connection status (call repeatedly after pairing)
+# After entering the pairing code on your device, check this endpoint
+# until the status changes to "connected"
+GET {{baseUrl}}/whatsapp/sessions/{{sessionId}}/status
+
+### 4. Get all active sessions
+# Useful to see all currently active WhatsApp connections
+GET {{baseUrl}}/whatsapp/sessions
+
+### 5. Close a connection
+# Use this to properly log out and close a WhatsApp connection
+DELETE {{baseUrl}}/whatsapp/sessions/{{sessionId}}
+
+### ====== MESSAGING ======
+
+### Send a text message
+# Basic text message - simplest form of message
+POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/messages
+Content-Type: application/json
+
+{
+  "to": "972542370954",
+  "content": "Hello from WhatsApp Cluster! Current time: {{$datetime iso8601}}",
+  "type": "text"
+}
+
+### Send a text message to yourself
+# Send a message to the same number used for the connection
+POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/messages
+Content-Type: application/json
+
+{
+  "to": "{{phoneNumber}}",
+  "content": "This is a test message to myself! Timestamp: {{$timestamp}}",
+  "type": "text"
+}
+
+### Send an image message
+# Image message with caption
+POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/messages
+Content-Type: application/json
+
+{
+  "to": "{{phoneNumber}}",
+  "content": {
+    "url": "https://picsum.photos/800/600",
+    "caption": "Random image from Lorem Picsum!"
+  },
+  "type": "image"
+}
+
+### Send a document message
+# PDF document with custom filename
+POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/messages
+Content-Type: application/json
+
+{
+  "to": "{{phoneNumber}}",
+  "content": {
+    "url": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+    "fileName": "Sample Document.pdf",
+    "mimetype": "application/pdf"
+  },
+  "type": "document"
+}
+
+### Send a location message
+# Coordinates with a location name
+POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/messages
+Content-Type: application/json
+
+{
+  "to": "{{phoneNumber}}",
+  "content": {
+    "degreesLatitude": 32.0853,
+    "degreesLongitude": 34.7818,
+    "name": "Tel Aviv, Israel"
+  },
+  "type": "location"
+}
+
+### ====== BULK MESSAGING ======
+
+### Send bulk text messages
+# Send the same message to multiple recipients
+POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/bulk-messages
+Content-Type: application/json
+
+{
+  "recipients": ["{{phoneNumber}}", "972501234567"],
+  "content": "This is a bulk message test. Time: {{$datetime 'YYYY-MM-DD HH:mm:ss'}}",
+  "type": "text"
+}
+
+### Send bulk image messages
+POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/bulk-messages
+Content-Type: application/json
+
+{
+  "recipients": ["{{phoneNumber}}"],
+  "content": {
+    "url": "https://picsum.photos/1024/768",
+    "caption": "Bulk image message test!"
+  },
+  "type": "image"
+}
+
+### ====== SESSION MANAGEMENT ======
+
+### Create a new WhatsApp connection with custom session name
+# Create a different session for another phone number or account
+@customSession = business_account
+POST {{baseUrl}}/whatsapp/sessions/{{customSession}}
+Content-Type: application/json
+
+{
+  "phoneNumber": "+972501234567"
+}
+
+### TROUBLESHOOTING TIPS:
+# 1. If connection shows "pairing" but doesn't connect after entering code:
+#    - Try closing and recreating the session
+#    - Check your phone's internet connection
+#    - Make sure WhatsApp is open on your phone when entering the code
+# 
+# 2. If you get a "Session not found" error:
+#    - The session might have disconnected or expired
+#    - Create a new session with the phone number
+#
+# 3. If messages aren't being delivered:
+#    - Verify the connection status is "connected"
+#    - Check that the recipient number is correctly formatted
+
+### Session created on: 2025-05-30 11:34:02
+### Current User: zushar
