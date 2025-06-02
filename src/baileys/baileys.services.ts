@@ -129,8 +129,6 @@ export class BaileysService {
       version,
       auth: state,
       browser: Browsers.ubuntu('Chrome'),
-      mobile: false,
-      printQRInTerminal: false,
       logger: this.createBaileysLogger(sessionId),
     });
 
