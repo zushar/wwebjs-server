@@ -24,17 +24,40 @@ services:
           action: sync
     depends_on:
       - redis
+      - postgres  # Add dependency on PostgreSQL
     environment:
       - REDIS_HOST=redis  # חשוב: השם הזה הוא שם הקונטיינר
       - REDIS_PORT=6379
+      - DB_HOST=postgres  # PostgreSQL container name
+      - DB_PORT=5432
+      - DB_USERNAME=postgres
+      - DB_PASSWORD=postgres
+      - DB_DATABASE=whatsapp
     restart: always
     volumes:
       - ./whatsapp-session:/usr/src/app/whatsapp-session
     networks:
       - internal-net  # גם כאן
 
+  postgres:
+    image: postgres:latest
+    container_name: postgres-db
+    ports:
+      - "5432:5432"  # Access PostgreSQL from localhost
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=whatsapp
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+    networks:
+      - internal-net  # Same network
+
 volumes:
   redis_data:
+    driver: local
+  postgres_data:  # Volume for PostgreSQL data
     driver: local
   whatsapp_sessions:
     driver: local

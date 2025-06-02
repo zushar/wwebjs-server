@@ -32,6 +32,9 @@ GET {{baseUrl}}/whatsapp/sessions/{{sessionId}}/status
 # Useful to see all currently active WhatsApp connections
 GET {{baseUrl}}/whatsapp/sessions
 
+### 4. Get session snapshots
+GET {{baseUrl}}/whatsapp/snapshots
+
 ### 5. Close a connection
 # Use this to properly log out and close a WhatsApp connection
 DELETE {{baseUrl}}/whatsapp/sessions/{{sessionId}}
@@ -142,6 +145,8 @@ Content-Type: application/json
   "phoneNumber": "+972501234567"
 }
 
+### get all groups
+GET {{baseUrl}}/whatsapp/sessions/{{sessionId}}/chats
 ### TROUBLESHOOTING TIPS:
 # 1. If connection shows "pairing" but doesn't connect after entering code:
 #    - Try closing and recreating the session

@@ -1,14 +1,6 @@
+// source: src/types/baileys-ws.d.ts
 /* eslint-disable prettier/prettier */
-// src/types/baileys-ws.d.ts
-import type { WASocket } from '@whiskeysockets/baileys';
-import type WebSocket from 'ws';
-
-declare module '@whiskeysockets/baileys' {
-  interface WASocket {
-    /** the raw ws under the hood */
-    ws: WebSocket;
-  }
-}
+import type { WASocket, proto } from '@whiskeysockets/baileys';
 
 declare global {
   export type MessageTypes =
@@ -25,20 +17,24 @@ declare global {
     error?: string;
   }
 
-  export interface Connection {
-    socket: WASocket | null;
+  export type Connection = {
+    socket: WASocket;
     pairingCode: string | null;
     status: string;
     reconnectAttempts: number;
-  }
+  };
 
   export interface SessionInfo {
     phoneNumber: string;
     createdAt: string;
     createdBy: string;
   }
+
+  export type ChatData = {
+    chatId: string; // The unique chat ID (WhatsApp JID)
+    messages: proto.IWebMessageInfo[]; // Array of message objects for this chat
+  };
 }
 
 // This file only declares globals
 export { };
-

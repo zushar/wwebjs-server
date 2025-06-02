@@ -1,14 +1,14 @@
 // src/baileys/baileys.service.ts
 import { Boom } from '@hapi/boom';
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
-import type { WASocket } from '@whiskeysockets/baileys';
+import { InjectRepository } from '@nestjs/typeorm';
 import makeWASocket, {
   AnyMessageContent,
   Browsers,
   ConnectionState,
   DisconnectReason,
-  fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
+  proto,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 import * as fs from 'fs';
@@ -18,21 +18,31 @@ import {
 } from 'nest-winston';
 import * as path from 'path';
 import type Pino from 'pino';
+import { Repository } from 'typeorm';
 import { inspect } from 'util';
 import { type Logger as WinstonLogger } from 'winston';
-import WebSocket from 'ws';
+import { ChatData, MessageData } from './chat-data.entity';
+import {
+  InMemoryChatData,
+  WhatsAppChat,
+} from './interfaces/chat-data.interface';
 @Injectable()
 export class BaileysService {
-  private connections = new Map<string, Connection>();
+  private connections: Map<string, Connection> = new Map();
   private readonly sessionsDir: string;
   private readonly maxReconnectAttempts = 5;
   private readonly reconnectInterval = 5000;
+  private chatStore = new Map<string, Map<string, InMemoryChatData>>();
 
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: LoggerService,
     @Inject(WINSTON_MODULE_PROVIDER)
     private readonly rawWinston: WinstonLogger,
+    @InjectRepository(ChatData)
+    private chatRepository: Repository<ChatData>,
+    @InjectRepository(MessageData)
+    private messageRepository: Repository<MessageData>,
   ) {
     const cwd = process.cwd();
     if (!cwd) {
@@ -95,7 +105,9 @@ export class BaileysService {
     const formattedNumber = phoneNumber.replace(/\D/g, '');
     const sessionDir = path.join(this.sessionsDir, sessionId);
     const isNewSession = !fs.existsSync(sessionDir);
-
+    if (!this.chatStore.has(sessionId)) {
+      this.chatStore.set(sessionId, new Map<string, InMemoryChatData>());
+    }
     if (isNewSession) {
       fs.mkdirSync(sessionDir, { recursive: true });
       const sessionInfo: SessionInfo = {
@@ -110,10 +122,8 @@ export class BaileysService {
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-    const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
-      version,
       auth: {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(
@@ -125,7 +135,7 @@ export class BaileysService {
       mobile: false,
       printQRInTerminal: false,
       logger: baileyLogger,
-    }) as unknown as WASocket;
+    });
 
     const connection: Connection = {
       socket: sock,
@@ -160,39 +170,6 @@ export class BaileysService {
 
       sock.ev.on('connection.update', onRegister);
     }
-    const ws = sock.ws;
-    ws.on('message', (data: WebSocket.Data) => {
-      const buf =
-        typeof data === 'string'
-          ? Buffer.from(data)
-          : Buffer.isBuffer(data)
-            ? data
-            : Buffer.from(data as ArrayBuffer);
-
-      this.rawWinston
-        .child({ session: sessionId, direction: 'IN' })
-        .debug(buf.toString('hex'));
-    });
-
-    // 3) Monkey‐patch send so you log every outgoing frame
-    const origSend = ws.send.bind(ws) as typeof ws.send;
-    const patchedSend: typeof ws.send = (...args) => {
-      const data = args[0];
-      const buf =
-        typeof data === 'string'
-          ? Buffer.from(data)
-          : Buffer.isBuffer(data)
-            ? data
-            : Buffer.from(data as ArrayBuffer);
-
-      this.rawWinston
-        .child({ session: sessionId, direction: 'OUT' })
-        .debug(buf.toString('hex'));
-
-      return origSend(...args);
-    };
-    // Cast back to the socket's send-signature
-    ws.send = patchedSend;
 
     if (connection.socket) {
       // Handle connection updates
@@ -272,9 +249,7 @@ export class BaileysService {
           }
           if (connectionStatus === 'connecting') {
             connection.status = 'connecting';
-            this.logger.log(
-              `Connecting ${sessionId}...dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd`,
-            );
+            this.logger.log(`Connecting ${sessionId}...`);
           }
         },
       );
@@ -288,6 +263,76 @@ export class BaileysService {
           );
         });
       });
+      connection.socket.ev.on(
+        'messaging-history.set',
+        ({
+          chats: newChats,
+          contacts: newContacts,
+          messages: newMessages,
+          syncType,
+        }) => {
+          this.logger.log(
+            `Messaging history set for ${sessionId}: syncType=${syncType}, chats=${newChats.length}, contacts=${newContacts.length}, messages=${newMessages.length}`,
+          );
+
+          // Store the chats, contacts, and messages in the chat store
+          if (!this.chatStore.has(sessionId)) {
+            this.chatStore.set(sessionId, new Map<string, InMemoryChatData>());
+          }
+          const sessionChats = this.chatStore.get(sessionId)!;
+
+          // Process and log chats
+          if (newChats.length > 0) {
+            this.logger.log(
+              `New chats for ${sessionId}: ${newChats.map((chat) => chat.id).join(', ')}`,
+            );
+
+            // Store each chat in database
+            for (const chat of newChats) {
+              void this.storeChat(sessionId, chat);
+
+              // Also add to in-memory store
+              if (!sessionChats.has(chat.id)) {
+                sessionChats.set(chat.id, {
+                  chatId: chat.id,
+                  messages: [],
+                });
+              }
+            }
+          }
+
+          // Process and log contacts
+          if (newContacts.length > 0) {
+            this.logger.log(
+              `New contacts for ${sessionId}: ${newContacts
+                .map((contact) => contact.id)
+                .join(', ')}`,
+            );
+            // Optionally store contacts if needed
+          }
+
+          // Process and log messages
+          if (newMessages.length > 0) {
+            this.logger.log(
+              `New messages for ${sessionId}: ${newMessages
+                .map((message) => message.key.id || 'unknown-id')
+                .join(', ')}`,
+            );
+
+            // Store each message in database
+            for (const message of newMessages) {
+              void this.storeMessage(sessionId, message);
+
+              // Also add to in-memory store if we have the chat
+              const chatId = message.key.remoteJid;
+              if (chatId && sessionChats.has(chatId)) {
+                const chatData = sessionChats.get(chatId)!;
+                chatData.messages.push(message);
+              }
+            }
+          }
+        },
+      );
 
       // Handle incoming messages
       connection.socket.ev.on('messages.upsert', ({ messages }) => {
@@ -296,7 +341,8 @@ export class BaileysService {
             this.logger.log(
               `New message in ${sessionId} from ${message.key.remoteJid}`,
             );
-            // Here you could implement webhook notifications or message queuing
+            this.storeChatMessage(sessionId, message);
+            void this.storeMessage(sessionId, message);
           }
         }
       });
@@ -304,6 +350,21 @@ export class BaileysService {
 
     this.connections.set(sessionId, connection);
     return { status: connection.status };
+  }
+  private storeChatMessage(sessionId: string, message: proto.IWebMessageInfo) {
+    const chatId = message.key?.remoteJid ?? 'unknown';
+    if (!this.chatStore.has(sessionId)) {
+      this.chatStore.set(sessionId, new Map<string, InMemoryChatData>());
+    }
+    const sessionChats = this.chatStore.get(sessionId)!;
+    if (!sessionChats.has(chatId)) {
+      sessionChats.set(chatId, {
+        chatId,
+        messages: [],
+      });
+    }
+    const chatData = sessionChats.get(chatId)!;
+    chatData.messages.push(message);
   }
 
   // Implement a proper logger that matches the ILogger interface
@@ -608,5 +669,154 @@ export class BaileysService {
       };
     }
     return {};
+  }
+  private extractMessageContent(
+    message: proto.IWebMessageInfo,
+  ): Record<string, any> {
+    const content: Record<string, any> = {};
+
+    if (message.message?.conversation) {
+      content.type = 'text';
+      content.text = message.message.conversation;
+    } else if (message.message?.imageMessage) {
+      content.type = 'image';
+      content.caption = message.message.imageMessage.caption || '';
+      content.url = message.message.imageMessage.url || '';
+      content.mimetype = message.message.imageMessage.mimetype || '';
+    } else if (message.message?.videoMessage) {
+      content.type = 'video';
+      content.caption = message.message.videoMessage.caption || '';
+      content.url = message.message.videoMessage.url || '';
+    } else if (message.message?.documentMessage) {
+      content.type = 'document';
+      content.fileName = message.message.documentMessage.fileName || '';
+      content.url = message.message.documentMessage.url || '';
+    } else if (message.message?.audioMessage) {
+      content.type = 'audio';
+      content.url = message.message.audioMessage.url || '';
+      content.ptt = message.message.audioMessage.ptt || false;
+    } else if (message.message?.locationMessage) {
+      content.type = 'location';
+      content.degreesLatitude =
+        message.message.locationMessage.degreesLatitude || 0;
+      content.degreesLongitude =
+        message.message.locationMessage.degreesLongitude || 0;
+    } else {
+      content.type = 'unknown';
+    }
+
+    return content;
+  }
+  getChatStoreSnapshot(): Record<string, Record<string, any>> {
+    const snapshot: Record<string, Record<string, any>> = {};
+    for (const [sessionId, chats] of this.chatStore.entries()) {
+      snapshot[sessionId] = {};
+      for (const [chatId, chatData] of chats.entries()) {
+        snapshot[sessionId][chatId] = {
+          chatId: chatData.chatId,
+          messageCount: chatData.messages.length,
+        };
+      }
+    }
+    return snapshot;
+  }
+  private async storeChat(
+    sessionId: string,
+    chat: WhatsAppChat,
+  ): Promise<void> {
+    const chatId = `${sessionId}-${chat.id}`;
+
+    try {
+      // Create the entity with type safety
+      const chatEntity = new ChatData();
+      chatEntity.id = chatId;
+      chatEntity.sessionId = sessionId;
+      chatEntity.chatId = chat.id;
+      chatEntity.metadata = {
+        name: chat.name || '',
+        unreadCount: chat.unreadCount || 0,
+        isGroup: Boolean(chat.isGroup),
+        isArchived: Boolean(chat.isArchived),
+      };
+      chatEntity.lastMessageAt = new Date();
+
+      // Check if entity exists first
+      const exists = await this.chatRepository.findOne({
+        where: { id: chatId },
+      });
+
+      if (exists) {
+        // Update existing entity
+        await this.chatRepository.update(
+          { id: chatId },
+          {
+            metadata: chatEntity.metadata,
+            lastMessageAt: chatEntity.lastMessageAt,
+          },
+        );
+      } else {
+        // Create new entity
+        await this.chatRepository.save(chatEntity);
+      }
+    } catch (error) {
+      this.logger.error(`Failed to store chat ${chatId}:`, error);
+    }
+  }
+
+  // Fix the storeMessage method - add proper type for messageTimestamp
+  private async storeMessage(
+    sessionId: string,
+    message: proto.IWebMessageInfo,
+  ): Promise<void> {
+    if (!message.key?.id) return;
+
+    const chatId = message.key.remoteJid;
+    if (!chatId) return;
+
+    try {
+      // Extract message content based on message type
+      const messageContent = this.extractMessageContent(message);
+
+      // Create the entity first to avoid type issues
+      const messageEntity = new MessageData();
+      messageEntity.id = message.key.id;
+      messageEntity.sessionId = sessionId;
+      messageEntity.chatId = chatId;
+      messageEntity.fromMe = Boolean(message.key.fromMe);
+      messageEntity.senderJid =
+        message.key.participant ||
+        message.participant ||
+        message.key.remoteJid ||
+        undefined;
+      messageEntity.messageContent = messageContent;
+
+      // Handle messageTimestamp properly
+      const timestamp =
+        typeof message.messageTimestamp === 'number'
+          ? new Date(message.messageTimestamp * 1000)
+          : new Date();
+      messageEntity.timestamp = timestamp;
+
+      await this.messageRepository.save(messageEntity);
+
+      // Update chat data with message count - first check if the chat exists
+      const chatEntityId = `${sessionId}-${chatId}`;
+      const chatExists = await this.chatRepository.findOne({
+        where: { id: chatEntityId },
+      });
+
+      if (chatExists) {
+        // Use update instead of increment for type safety
+        await this.chatRepository.update(
+          { id: chatEntityId },
+          { messageCount: chatExists.messageCount + 1 },
+        );
+      } else {
+        // Create a new chat entity if it doesn't exist
+        await this.storeChat(sessionId, { id: chatId });
+      }
+    } catch (error) {
+      this.logger.error(`Failed to store message ${message.key.id}:`, error);
+    }
   }
 }
