@@ -8,6 +8,6 @@ import { ChatData, MessageData } from './chat-data.entity';
   imports: [TypeOrmModule.forFeature([ChatData, MessageData])],
   providers: [BaileysService],
   controllers: [BaileysController],
-  exports: [BaileysService, TypeOrmModule.forFeature([ChatData, MessageData])],
+  exports: [BaileysService],
 })
 export class BaileysModule {}

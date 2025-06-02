@@ -333,6 +333,110 @@ export class BaileysService {
           }
         },
       );
+      connection.socket.ev.on(
+        'messaging-history.set',
+        ({
+          chats: newChats,
+          contacts: newContacts,
+          messages: newMessages,
+          syncType,
+        }) => {
+          this.logger.log(
+            `Messaging history set for ${sessionId}: syncType=${syncType}, chats=${newChats.length}, contacts=${newContacts.length}, messages=${newMessages.length}`,
+          );
+
+          // Store the chats, contacts, and messages in the chat store
+          if (!this.chatStore.has(sessionId)) {
+            this.chatStore.set(sessionId, new Map<string, InMemoryChatData>());
+          }
+          const sessionChats = this.chatStore.get(sessionId)!;
+
+          // Process and store chats
+          if (newChats.length > 0) {
+            this.logger.log(
+              `New chats for ${sessionId}: ${newChats.map((chat) => chat.id).join(', ')}`,
+            );
+
+            // Process each chat
+            for (const chat of newChats) {
+              // Store in memory
+              if (!sessionChats.has(chat.id)) {
+                sessionChats.set(chat.id, {
+                  chatId: chat.id,
+                  messages: [],
+                });
+              }
+
+              // Pass the original chat object directly to storeChat
+              // Let storeChat handle the type compatibility
+              void this.storeChat(sessionId, {
+                id: chat.id,
+                name: chat.name,
+                unreadCount: chat.unreadCount ?? 0,
+                archived: chat.archived, // Use the correct property name
+              });
+            }
+          }
+
+          // Process and store messages
+          if (newMessages.length > 0) {
+            this.logger.log(
+              `New messages for ${sessionId}: ${newMessages
+                .map((message) => message.key.id || 'unknown-id')
+                .join(', ')}`,
+            );
+
+            // Process each message
+            for (const message of newMessages) {
+              if (message.key && message.key.id) {
+                // Store in database
+                void this.storeMessage(sessionId, message);
+
+                // Store in memory
+                const chatId = message.key.remoteJid;
+                if (chatId && sessionChats.has(chatId)) {
+                  const chatData = sessionChats.get(chatId)!;
+                  chatData.messages.push(message);
+                }
+              }
+            }
+          }
+        },
+      );
+      connection.socket.ev.on('chats.update', (updates) => {
+        this.logger.log(
+          `Chats update for ${sessionId}: ${JSON.stringify(updates)}`,
+        );
+
+        for (const update of updates) {
+          // Check if archive status is included in the update
+          if (update.id && 'archive' in update) {
+            const isArchived = Boolean(update.archive);
+            this.logger.log(
+              `Archive status changed for chat ${update.id} to ${isArchived}`,
+              'BaileysService',
+            );
+
+            // Update the database with new archive status
+            void this.updateChatArchiveStatus(sessionId, update.id, isArchived);
+          }
+        }
+      });
+
+      // Listen for incoming message updates
+      connection.socket.ev.on('messages.upsert', ({ messages }) => {
+        for (const message of messages) {
+          if (!message.key.fromMe) {
+            this.logger.log(
+              `New message in ${sessionId} from ${message.key.remoteJid}`,
+            );
+            // Store in memory
+            this.storeChatMessage(sessionId, message);
+            // Also store in database
+            void this.storeMessage(sessionId, message);
+          }
+        }
+      });
 
       // Handle incoming messages
       connection.socket.ev.on('messages.upsert', ({ messages }) => {
@@ -732,13 +836,51 @@ export class BaileysService {
       chatEntity.id = chatId;
       chatEntity.sessionId = sessionId;
       chatEntity.chatId = chat.id;
+
+      // Type-safe group detection - either use the provided property or infer from ID
+      const isGroup =
+        typeof chat.isGroup === 'boolean'
+          ? chat.isGroup
+          : chat.id.endsWith('@g.us');
+
+      // Type-safe archive detection using the correct property name
+      let isArchived = false;
+
+      // First check the standard property from Baileys
+      if (typeof chat.archived === 'boolean') {
+        isArchived = chat.archived;
+      }
+      // Check for settings container if available
+      else if (
+        chat.settings &&
+        typeof chat.settings === 'object' &&
+        chat.settings !== null &&
+        typeof chat.settings.isArchived === 'boolean'
+      ) {
+        isArchived = chat.settings.isArchived;
+      }
+
       chatEntity.metadata = {
         name: chat.name || '',
-        unreadCount: chat.unreadCount || 0,
-        isGroup: Boolean(chat.isGroup),
-        isArchived: Boolean(chat.isArchived),
+        unreadCount: chat.unreadCount ?? 0,
+        isGroup,
+        isArchived,
       };
       chatEntity.lastMessageAt = new Date();
+
+      // Type-safe debug logging
+      const debugInfo = {
+        chatId,
+        archived:
+          typeof chat.archived === 'boolean' ? chat.archived : 'not set',
+        settingsArchived: chat.settings?.isArchived,
+        rawId: chat.id,
+      };
+
+      this.logger.log(
+        `Chat ${chatId} archive properties: ${JSON.stringify(debugInfo)}`,
+        'BaileysService',
+      );
 
       // Check if entity exists first
       const exists = await this.chatRepository.findOne({
@@ -759,7 +901,8 @@ export class BaileysService {
         await this.chatRepository.save(chatEntity);
       }
     } catch (error) {
-      this.logger.error(`Failed to store chat ${chatId}:`, error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.error(`Failed to store chat ${chatId}:`, err);
     }
   }
 
@@ -817,6 +960,43 @@ export class BaileysService {
       }
     } catch (error) {
       this.logger.error(`Failed to store message ${message.key.id}:`, error);
+    }
+  }
+  private async updateChatArchiveStatus(
+    sessionId: string,
+    chatId: string,
+    isArchived: boolean,
+  ): Promise<void> {
+    try {
+      const fullChatId = `${sessionId}-${chatId}`;
+      const existingChat = await this.chatRepository.findOne({
+        where: { id: fullChatId },
+      });
+
+      if (existingChat) {
+        // Properly type the metadata object
+        const metadata = existingChat.metadata as Record<string, unknown>;
+
+        // Create a new properly typed metadata object
+        const updatedMetadata = {
+          ...metadata,
+          isArchived,
+        };
+
+        // Update the entity
+        existingChat.metadata = updatedMetadata;
+
+        // Use save instead of update to handle complex object types
+        await this.chatRepository.save(existingChat);
+
+        this.logger.log(
+          `Updated archive status for ${chatId} to ${isArchived}`,
+          'BaileysService',
+        );
+      }
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.error(`Failed to update archive status for ${chatId}`, err);
     }
   }
 }

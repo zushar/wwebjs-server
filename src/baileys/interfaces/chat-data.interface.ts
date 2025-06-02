@@ -33,7 +33,10 @@ export interface WhatsAppChat {
   id: string;
   name?: string | null;
   unreadCount?: number | null;
-  isGroup?: boolean;
-  isArchived?: boolean;
-  [key: string]: any;
+  // Use correct property names to match Baileys types
+  isGroup?: boolean | null; // We'll handle this property ourselves
+  archived?: boolean | null; // This is the correct property name in Baileys
+  settings?: {
+    isArchived?: boolean;
+  };
 }
