@@ -39,9 +39,6 @@ export class BaileysController {
     @Param('sessionId') sessionId: string,
     @Body() createConnectionDto: CreateConnectionDto,
   ) {
-    this.logger.log(
-      `whatsapp/sessions/${sessionId} endpoint called with phone number: ${createConnectionDto.phoneNumber}`,
-    );
     try {
       return await this.baileysService.createConnection(
         sessionId,
@@ -56,9 +53,6 @@ export class BaileysController {
 
   @Get('sessions/:sessionId/pairing-code')
   getPairingCode(@Param('sessionId') sessionId: string) {
-    this.logger.log(
-      `whatsapp/sessions/${sessionId}/pairing-code endpoint called`,
-    );
     try {
       return this.baileysService.getPairingCode(sessionId);
     } catch (error: unknown) {

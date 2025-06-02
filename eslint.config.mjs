@@ -32,4 +32,11 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-argument': 'warn'
     },
   },
+  {
+    files: ['src/types/**/*.d.ts'],
+    rules: {
+      // we know our .d.ts is just for types, disable unused-vars
+      '@typescript-eslint/no-unused-vars': 'off',
+    },
+  },
 );

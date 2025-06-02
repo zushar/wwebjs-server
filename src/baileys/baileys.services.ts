@@ -1,57 +1,53 @@
+// src/baileys/baileys.service.ts
 import { Boom } from '@hapi/boom';
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, LoggerService } from '@nestjs/common';
+import type { WASocket } from '@whiskeysockets/baileys';
 import makeWASocket, {
   AnyMessageContent,
   Browsers,
   ConnectionState,
   DisconnectReason,
   fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 import * as fs from 'fs';
-import * as path from 'path';
 import {
-  Connection,
-  MessageResult,
-  MessageTypes,
-  SessionInfo,
-} from './baileys.types';
-
-interface ILogger {
-  level: string;
-  info: (...args: any[]) => void;
-  debug: (...args: any[]) => void;
-  warn: (...args: any[]) => void;
-  error: (...args: any[]) => void;
-  trace: (...args: any[]) => void;
-  fatal: (...args: any[]) => void;
-  child: () => ILogger;
-}
+  WINSTON_MODULE_NEST_PROVIDER,
+  WINSTON_MODULE_PROVIDER,
+} from 'nest-winston';
+import * as path from 'path';
+import type Pino from 'pino';
+import { inspect } from 'util';
+import { type Logger as WinstonLogger } from 'winston';
+import WebSocket from 'ws';
 @Injectable()
 export class BaileysService {
-  private readonly logger = new Logger(BaileysService.name);
-  private connections: Map<string, Connection> = new Map();
-  private readonly sessionsDir = path.join(process.cwd(), 'sessions');
+  private connections = new Map<string, Connection>();
+  private readonly sessionsDir: string;
   private readonly maxReconnectAttempts = 5;
-  private readonly reconnectInterval = 5000; // 5 seconds
+  private readonly reconnectInterval = 5000;
 
-  constructor() {
-    // Ensure process.cwd() is available and properly used
-    const currentDir = process.cwd();
-    if (!currentDir) {
-      this.logger.error('Unable to determine current working directory');
-      throw new Error('Unable to determine current working directory');
+  constructor(
+    @Inject(WINSTON_MODULE_NEST_PROVIDER)
+    private readonly logger: LoggerService,
+    @Inject(WINSTON_MODULE_PROVIDER)
+    private readonly rawWinston: WinstonLogger,
+  ) {
+    const cwd = process.cwd();
+    if (!cwd) {
+      this.logger.error('Unable to determine working directory');
+      throw new Error('Unable to determine working directory');
     }
-
-    this.sessionsDir = path.join(currentDir, 'sessions');
-    this.logger.log(`Sessions directory set to: ${this.sessionsDir}`);
-
+    this.sessionsDir = path.join(cwd, 'sessions');
+    this.logger.log(
+      `Sessions directory: ${this.sessionsDir}`,
+      'BaileysService',
+    );
     if (!fs.existsSync(this.sessionsDir)) {
       fs.mkdirSync(this.sessionsDir, { recursive: true });
     }
-
-    // Restore previous sessions
-    // void this.restoreSessions();
+    void this.restoreSessions();
   }
   private async restoreSessions(): Promise<void> {
     try {
@@ -87,74 +83,116 @@ export class BaileysService {
   async createConnection(
     sessionId: string,
     phoneNumber: string,
+    user: string = 'zushar',
   ): Promise<{ status: string }> {
+    const baileyLogger = this.createBaileysLogger(sessionId);
     if (this.connections.has(sessionId)) {
-      const connection = this.connections.get(sessionId);
-      return { status: connection ? connection.status : 'not_found' };
+      this.logger.warn(
+        `Session ${sessionId} already exists. Returning existing status.`,
+      );
+      return { status: this.connections.get(sessionId)!.status };
     }
-
+    const formattedNumber = phoneNumber.replace(/\D/g, '');
     const sessionDir = path.join(this.sessionsDir, sessionId);
-    if (!fs.existsSync(sessionDir)) {
-      fs.mkdirSync(sessionDir, { recursive: true });
+    const isNewSession = !fs.existsSync(sessionDir);
 
-      // Save session info for future restoration
+    if (isNewSession) {
+      fs.mkdirSync(sessionDir, { recursive: true });
       const sessionInfo: SessionInfo = {
         phoneNumber,
         createdAt: new Date().toISOString(),
-        createdBy: 'zushar', // Current user from context
+        createdBy: user,
       };
-
       fs.writeFileSync(
         path.join(sessionDir, 'session-info.json'),
-        JSON.stringify(sessionInfo),
+        JSON.stringify(sessionInfo, null, 2),
       );
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
     const { version } = await fetchLatestBaileysVersion();
 
+    const sock = makeWASocket({
+      version,
+      auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(
+          state.keys,
+          this.createBaileysLogger(sessionId),
+        ),
+      },
+      browser: Browsers.windows('Chrome'),
+      mobile: false,
+      printQRInTerminal: false,
+      logger: baileyLogger,
+    }) as unknown as WASocket;
+
     const connection: Connection = {
-      socket: null,
+      socket: sock,
       pairingCode: null,
       status: 'connecting',
       reconnectAttempts: 0,
     };
+    this.logger.log(`isNewSession: ${isNewSession}`);
+    if (isNewSession) {
+      const onRegister = (update: Partial<ConnectionState>) => {
+        if (update.qr) {
+          // uninstall ourselves immediately
+          sock.ev.off('connection.update', onRegister);
 
-    // Format the phone number to ensure it's valid
-    const formattedPhoneNumber = phoneNumber.startsWith('+')
-      ? phoneNumber.substring(1)
-      : phoneNumber;
-
-    connection.socket = makeWASocket({
-      version,
-      auth: state,
-      browser: Browsers.ubuntu('Chrome'),
-      logger: this.createBaileysLogger(sessionId),
-    });
-
-    // Request pairing code after socket is created
-    if (connection.socket) {
-      setTimeout(() => {
-        void (async () => {
-          if (connection.socket && connection.status !== 'connected') {
+          // now do the async work, but don't return it
+          void (async () => {
             try {
-              const code =
-                await connection.socket.requestPairingCode(
-                  formattedPhoneNumber,
-                );
+              const code = await sock.requestPairingCode(formattedNumber);
               connection.pairingCode = code;
               connection.status = 'pairing';
               this.logger.log(`Pairing code for ${sessionId}: ${code}`);
-            } catch (error) {
+            } catch (raw) {
+              const err = raw instanceof Error ? raw : new Error(String(raw));
               this.logger.error(
                 `Failed to request pairing code for ${sessionId}:`,
-                error,
+                err,
               );
             }
-          }
-        })();
-      }, 3000); // Wait a bit before requesting the code
+          })();
+        }
+      };
+
+      sock.ev.on('connection.update', onRegister);
     }
+    const ws = sock.ws;
+    ws.on('message', (data: WebSocket.Data) => {
+      const buf =
+        typeof data === 'string'
+          ? Buffer.from(data)
+          : Buffer.isBuffer(data)
+            ? data
+            : Buffer.from(data as ArrayBuffer);
+
+      this.rawWinston
+        .child({ session: sessionId, direction: 'IN' })
+        .debug(buf.toString('hex'));
+    });
+
+    // 3) Monkey‐patch send so you log every outgoing frame
+    const origSend = ws.send.bind(ws) as typeof ws.send;
+    const patchedSend: typeof ws.send = (...args) => {
+      const data = args[0];
+      const buf =
+        typeof data === 'string'
+          ? Buffer.from(data)
+          : Buffer.isBuffer(data)
+            ? data
+            : Buffer.from(data as ArrayBuffer);
+
+      this.rawWinston
+        .child({ session: sessionId, direction: 'OUT' })
+        .debug(buf.toString('hex'));
+
+      return origSend(...args);
+    };
+    // Cast back to the socket's send-signature
+    ws.send = patchedSend;
 
     if (connection.socket) {
       // Handle connection updates
@@ -162,63 +200,93 @@ export class BaileysService {
         'connection.update',
         (update: Partial<ConnectionState>) => {
           const { connection: connectionStatus, lastDisconnect } = update;
-
+          this.logger.log(
+            `Connection update for ${sessionId}: ${JSON.stringify(update)}`,
+          );
+          if (connectionStatus === 'open') {
+            connection.status = 'connected';
+            connection.reconnectAttempts = 0;
+            this.logger.log(`Connection ${sessionId} is now connected`);
+          }
           if (connectionStatus === 'close') {
-            const error = lastDisconnect?.error;
+            const boomErr = lastDisconnect?.error as Boom | undefined;
+            const code = boomErr?.output?.statusCode;
             this.logger.error(
-              `Connection closed with details: ${JSON.stringify(error)}`,
+              `Connection closed for ${sessionId}: statusCode=${code}`,
             );
-            if (error) {
-              this.logger.error(
-                `Error code: ${(error as Boom).output?.statusCode}`,
-              );
-              this.logger.error(`Error message: ${error.message}`);
+            if (code === Number(DisconnectReason.loggedOut)) {
+              this.logger.warn(`Logged out. Deleting session ${sessionId}`);
+              const sessionDir = path.join(this.sessionsDir, sessionId);
+              if (fs.existsSync(sessionDir)) {
+                fs.rmSync(sessionDir, { recursive: true, force: true });
+                this.logger.log(
+                  `🗑️ Deleted corrupted session data for ${sessionId}`,
+                );
+                this.connections.delete(sessionId);
+                return;
+              }
             }
-            const statusCode = (lastDisconnect?.error as Boom)?.output
-              ?.statusCode;
-            // Use the DisconnectReason enum instead of hardcoded value
-            const shouldReconnect =
-              statusCode !== Number(DisconnectReason.loggedOut) &&
-              connection.reconnectAttempts < this.maxReconnectAttempts;
+            if (code === 405) {
+              this.logger.warn(
+                `🚫 WhatsApp blocked connection. Cleaning session ${sessionId}`,
+              );
+              connection.status = 'blocked';
 
-            if (shouldReconnect) {
+              // מחק credentials פגומים
+              const sessionDir = path.join(this.sessionsDir, sessionId);
+              if (fs.existsSync(sessionDir)) {
+                fs.rmSync(sessionDir, { recursive: true, force: true });
+                this.logger.log(
+                  `🗑️ Deleted corrupted session data for ${sessionId}`,
+                );
+              }
+
+              this.connections.delete(sessionId);
+              return;
+            }
+            if (code === Number(DisconnectReason.restartRequired)) {
+              this.logger.warn(
+                `Restart required for session ${sessionId}. Recreating socket…`,
+              );
+
+              this.connections.delete(sessionId);
+
+              void this.createConnection(sessionId, phoneNumber, user);
+              return;
+            }
+            if (connection.reconnectAttempts < this.maxReconnectAttempts) {
               connection.reconnectAttempts++;
               this.logger.log(
-                `Connection ${sessionId} closed. Reconnect attempt ${connection.reconnectAttempts}/${this.maxReconnectAttempts}`,
+                `Reconnecting ${sessionId} (${connection.reconnectAttempts}/${this.maxReconnectAttempts})…`,
               );
-
               setTimeout(() => {
-                this.createConnection(sessionId, phoneNumber).catch((error) =>
-                  this.logger.error(`Failed to reconnect ${sessionId}:`, error),
-                );
+                void this.createConnection(sessionId, phoneNumber, user);
               }, this.reconnectInterval);
             } else {
               connection.status = 'disconnected';
               this.connections.delete(sessionId);
               this.logger.warn(
-                `Connection ${sessionId} permanently closed. ${
-                  statusCode === Number(DisconnectReason.loggedOut)
-                    ? 'Logged out from device'
-                    : 'Max reconnect attempts reached'
-                }`,
+                `Permanently closed ${sessionId} after ${this.maxReconnectAttempts} attempts`,
               );
             }
-          } else if (connectionStatus === 'open') {
-            connection.status = 'connected';
-            connection.reconnectAttempts = 0; // Reset reconnect attempts on successful connection
-            this.logger.log(`Connection ${sessionId} is now connected`);
+          }
+          if (connectionStatus === 'connecting') {
+            connection.status = 'connecting';
+            this.logger.log(
+              `Connecting ${sessionId}...dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd`,
+            );
           }
         },
       );
-
       // Handle credentials update
       connection.socket.ev.on('creds.update', () => {
-        saveCreds().catch((error) =>
+        saveCreds().catch((err: unknown) => {
+          const error = err instanceof Error ? err : new Error(String(err));
           this.logger.error(
             `Failed to save credentials for ${sessionId}:`,
             error,
-          ),
-        );
+          );
+        });
       });
 
       // Handle incoming messages
@@ -239,23 +307,62 @@ export class BaileysService {
   }
 
   // Implement a proper logger that matches the ILogger interface
-  private createBaileysLogger(sessionId: string): ILogger {
-    return {
-      level: 'info',
-      info: (...args: any[]) =>
-        this.logger.log(`[${sessionId}] INFO: ${args.join(' ')}`),
-      debug: (...args: any[]) =>
-        this.logger.debug(`[${sessionId}] DEBUG: ${args.join(' ')}`),
-      warn: (...args: any[]) =>
-        this.logger.warn(`[${sessionId}] WARN: ${args.join(' ')}`),
-      error: (...args: any[]) =>
-        this.logger.error(`[${sessionId}] ERROR: ${args.join(' ')}`),
-      trace: (...args: any[]) =>
-        this.logger.verbose(`[${sessionId}] TRACE: ${args.join(' ')}`),
-      fatal: (...args: any[]) =>
-        this.logger.error(`[${sessionId}] FATAL: ${args.join(' ')}`),
-      child: () => this.createBaileysLogger(`${sessionId}:child`),
+  private createBaileysLogger(sessionId: string): Pino.Logger {
+    // 1) make a child Winston logger so every entry has { session: sessionId }
+    const childW = this.rawWinston.child({ session: sessionId });
+
+    // 2) our JSON replacer: when you hit a Buffer or Uint8Array, dump it as full hex
+    const binaryReplacer = (_key: string, val: any): any => {
+      if (Buffer.isBuffer(val)) {
+        // "aabbcc..." full hex string
+        return val.toString('hex');
+      }
+      if (ArrayBuffer.isView(val)) {
+        // TypedArrays (Uint8Array, etc)
+        return Buffer.from(val as Uint8Array).toString('hex');
+      }
+      return val;
     };
+
+    // 3) stringify each argument, with fallback to inspect()
+    const formatArgs = (args: unknown[]): string => {
+      return args
+        .map((arg) => {
+          if (typeof arg === 'string') {
+            return arg;
+          }
+
+          try {
+            // pretty‐print JSON with 2 spaces, but hex‐dump any buffers
+            return JSON.stringify(arg, binaryReplacer, 2);
+          } catch {
+            // circular or non‐JSONable → fallback to util.inspect
+            return inspect(arg, {
+              depth: null,
+              maxArrayLength: null,
+              // showProxy, breakLength, etc… tweak as you like
+            });
+          }
+        })
+        .join(' ');
+    };
+
+    // 4) build a minimal Pino‐shaped adapter and cast it
+    const adapter = {
+      level: childW.level,
+      silent: false,
+
+      trace: (...a: unknown[]) => childW.verbose?.(formatArgs(a)),
+      debug: (...a: unknown[]) => childW.debug?.(formatArgs(a)),
+      info: (...a: unknown[]) => childW.info?.(formatArgs(a)),
+      warn: (...a: unknown[]) => childW.warn?.(formatArgs(a)),
+      error: (...a: unknown[]) => childW.error?.(formatArgs(a)),
+      fatal: (...a: unknown[]) => childW.error?.(formatArgs(a)),
+
+      child: () => adapter,
+    } as unknown as Pino.Logger;
+
+    return adapter;
   }
 
   getPairingCode(sessionId: string): { pairingCode: string } {
@@ -481,5 +588,25 @@ export class BaileysService {
       success: results.some((r) => r.success),
       results,
     };
+  }
+  getErrorReasonAndLocation(error: unknown): {
+    reason?: string;
+    location?: string;
+  } {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'data' in error &&
+      typeof (error as { data: unknown }).data === 'object' &&
+      (error as { data: unknown }).data !== null
+    ) {
+      const data = (error as { data: { reason?: string; location?: string } })
+        .data;
+      return {
+        reason: typeof data.reason === 'string' ? data.reason : undefined,
+        location: typeof data.location === 'string' ? data.location : undefined,
+      };
+    }
+    return {};
   }
 }
