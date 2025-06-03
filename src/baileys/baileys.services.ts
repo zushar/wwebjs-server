@@ -4,8 +4,8 @@ import {
   WINSTON_MODULE_PROVIDER,
 } from 'nest-winston';
 import { Logger as WinstonLogger } from 'winston';
-import { ChatService } from './chat.service';
 import { ConnectionService } from './connection.service';
+import { GroupService } from './group.service';
 import { MessageService } from './message.service';
 
 @Injectable()
@@ -17,7 +17,7 @@ export class BaileysService {
     private readonly rawWinston: WinstonLogger,
     private readonly connectionService: ConnectionService,
     private readonly messageService: MessageService,
-    private readonly chatService: ChatService,
+    private readonly groupService: GroupService,
   ) {}
 
   async onModuleInit() {

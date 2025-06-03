@@ -8,8 +8,8 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
-@Entity('chats')
-export class ChatEntity {
+@Entity('groups')
+export class GroupEntity {
   /**
    * Primary composite key: session ID + chat JID
    */
@@ -106,7 +106,7 @@ export class ChatEntity {
   /**
    * Helper method to update the chat from a Baileys Chat object
    */
-  updateFromBaileysChat(chat: Chat): void {
+  updateFromBaileysGroup(chat: Chat): void {
     this.id = chat.id;
 
     // Handle name (could be null, which we convert to undefined)

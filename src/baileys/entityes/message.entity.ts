@@ -8,7 +8,7 @@ import {
   PrimaryColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { ChatEntity } from './chat.entity';
+import { GroupEntity } from './group.entity';
 
 @Entity('messages')
 export class MessageEntity {
@@ -62,12 +62,12 @@ export class MessageEntity {
   updatedAt: Date;
 
   // Relationship with ChatEntity
-  @ManyToOne(() => ChatEntity)
+  @ManyToOne(() => GroupEntity)
   @JoinColumn([
     { name: 'sessionId', referencedColumnName: 'sessionId' },
     { name: 'chatId', referencedColumnName: 'id' },
   ])
-  chat: ChatEntity;
+  chat: GroupEntity;
 
   /**
    * Helper method to update the message from a Baileys WebMessageInfo object

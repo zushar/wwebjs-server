@@ -3,16 +3,16 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Chat, proto } from '@whiskeysockets/baileys';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { Repository } from 'typeorm';
-import { ChatEntity } from './entityes/chat.entity';
+import { GroupEntity } from './entityes/group.entity';
 import { MessageEntity } from './entityes/message.entity';
 
 @Injectable()
-export class ChatService {
+export class GroupService {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: LoggerService,
-    @InjectRepository(ChatEntity)
-    private chatEntityRepository: Repository<ChatEntity>,
+    @InjectRepository(GroupEntity)
+    private chatEntityRepository: Repository<GroupEntity>,
     @InjectRepository(MessageEntity)
     private messageEntityRepository: Repository<MessageEntity>,
   ) {}
@@ -73,13 +73,13 @@ export class ChatService {
   private async ensureChatExists(
     sessionId: string,
     chatId: string,
-  ): Promise<ChatEntity> {
+  ): Promise<GroupEntity> {
     let chat = await this.chatEntityRepository.findOne({
       where: { sessionId, id: chatId },
     });
 
     if (!chat) {
-      chat = new ChatEntity();
+      chat = new GroupEntity();
       chat.sessionId = sessionId;
       chat.id = chatId;
       chat.name = '';
@@ -111,12 +111,15 @@ export class ChatService {
   }
 
   /**
-   * Stores a chat using the ChatEntity
+   * Stores a chat using the GroupEntity
    */
-  async storeEnhancedChat(sessionId: string, chat: Chat): Promise<ChatEntity> {
+  async storeEnhancedGroup(
+    sessionId: string,
+    chat: Chat,
+  ): Promise<GroupEntity> {
     try {
       // Try to find an existing chat entity
-      let chatEntity = await this.chatEntityRepository.findOne({
+      let groupEntity = await this.chatEntityRepository.findOne({
         where: {
           sessionId,
           id: chat.id,
@@ -124,17 +127,17 @@ export class ChatService {
       });
 
       // If not found, create a new one
-      if (!chatEntity) {
-        chatEntity = new ChatEntity();
-        chatEntity.sessionId = sessionId;
-        chatEntity.id = chat.id;
+      if (!groupEntity) {
+        groupEntity = new GroupEntity();
+        groupEntity.sessionId = sessionId;
+        groupEntity.id = chat.id;
       }
 
       // Update the entity using our helper method
-      chatEntity.updateFromBaileysChat(chat);
+      groupEntity.updateFromBaileysGroup(chat);
 
       // Save to database
-      return await this.chatEntityRepository.save(chatEntity);
+      return await this.chatEntityRepository.save(groupEntity);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       this.logger.error(`Failed to store enhanced chat ${chat.id}:`, err);
@@ -148,7 +151,7 @@ export class ChatService {
   async getChatByJid(
     sessionId: string,
     jid: string,
-  ): Promise<ChatEntity | null> {
+  ): Promise<GroupEntity | null> {
     return this.chatEntityRepository.findOne({
       where: { sessionId, id: jid },
     });
@@ -164,7 +167,7 @@ export class ChatService {
       limit?: number;
       offset?: number;
     },
-  ): Promise<[ChatEntity[], number]> {
+  ): Promise<[GroupEntity[], number]> {
     const query = this.chatEntityRepository
       .createQueryBuilder('chat')
       .where('chat.sessionId = :sessionId', { sessionId });
@@ -200,15 +203,15 @@ export class ChatService {
     isArchived: boolean,
   ): Promise<void> {
     try {
-      // Find in the ChatEntity
-      const chatEntity = await this.chatEntityRepository.findOne({
+      // Find in the groupEntity
+      const groupEntity = await this.chatEntityRepository.findOne({
         where: { sessionId, id: chatId },
       });
 
-      if (chatEntity) {
+      if (groupEntity) {
         // Update in the structure
-        chatEntity.archived = isArchived;
-        await this.chatEntityRepository.save(chatEntity);
+        groupEntity.archived = isArchived;
+        await this.chatEntityRepository.save(groupEntity);
         this.logger.log(
           `Updated archive status for ${chatId} to ${isArchived}`,
         );

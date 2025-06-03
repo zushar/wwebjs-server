@@ -19,7 +19,7 @@ import * as path from 'path';
 import { LoggerUtil } from 'src/utils/logget.util';
 import { Logger as WinstonLogger } from 'winston';
 import { WhatsAppLoggerService } from '../logging/whatsapp-logger.service';
-import { ChatService } from './chat.service';
+import { GroupService } from './group.service';
 import { InMemoryChatData } from './interfaces/chat-data.interface';
 import { MessageService } from './message.service';
 
@@ -44,8 +44,8 @@ export class ConnectionService {
     @Inject(WINSTON_MODULE_PROVIDER)
     private readonly rawWinston: WinstonLogger,
     private readonly whatsappLogger: WhatsAppLoggerService,
-    @Inject(forwardRef(() => ChatService))
-    private readonly chatService: ChatService,
+    @Inject(forwardRef(() => GroupService))
+    private readonly groupService: GroupService,
     @Inject(forwardRef(() => MessageService))
     private readonly messageService: MessageService,
   ) {
@@ -375,7 +375,7 @@ export class ConnectionService {
 
             for (const chat of groupChats) {
               try {
-                await this.chatService.storeEnhancedChat(sessionId, chat);
+                await this.groupService.storeEnhancedGroup(sessionId, chat);
               } catch (error) {
                 this.logger.error(
                   `Failed to store group chat ${chat.id}:`,
@@ -397,7 +397,7 @@ export class ConnectionService {
             );
 
             for (const chat of groupChats) {
-              await this.chatService.storeEnhancedChat(sessionId, chat);
+              await this.groupService.storeEnhancedGroup(sessionId, chat);
             }
           }
         }),
@@ -410,14 +410,14 @@ export class ConnectionService {
           for (const update of updates) {
             if (update.id && update.id.endsWith('@g.us')) {
               // Get the existing chat first
-              const existingChat = await this.chatService.getChatByJid(
+              const existingChat = await this.groupService.getChatByJid(
                 sessionId,
                 update.id,
               );
               if (existingChat) {
                 // Merge the update with existing data
                 const updatedChat = { ...existingChat, ...update } as Chat;
-                await this.chatService.storeEnhancedChat(
+                await this.groupService.storeEnhancedGroup(
                   sessionId,
                   updatedChat,
                 );
@@ -426,7 +426,7 @@ export class ConnectionService {
               // Handle archive status specially (for backward compatibility)
               if ('archived' in update) {
                 const isArchived = Boolean(update.archived);
-                await this.chatService.updateArchiveStatus(
+                await this.groupService.updateArchiveStatus(
                   sessionId,
                   update.id,
                   isArchived,

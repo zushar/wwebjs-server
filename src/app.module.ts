@@ -3,7 +3,7 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BaileysModule } from './baileys/baileys.module';
-import { ChatEntity } from './baileys/entityes/chat.entity';
+import { ChatEntity } from './baileys/entityes/group.entity';
 import { MessageEntity } from './baileys/entityes/message.entity';
 import { LoggingModule } from './logging/logging.module';
 import { RequestLoggerMiddleware } from './logging/request-logger.middleware';

@@ -7,7 +7,9 @@
 # (by default in the bottom right of VS Code when viewing a .http file)
 
 @sessionId = user2
-@timestamp = {{timestamp}}
+@clientId = your-client-id-here
+@timestamp = {{$timestamp}}
+
 ### ====== CONNECTION MANAGEMENT ======
 
 ### 1. Create a new WhatsApp connection
@@ -32,16 +34,53 @@ GET {{baseUrl}}/whatsapp/sessions/{{sessionId}}/status
 # Useful to see all currently active WhatsApp connections
 GET {{baseUrl}}/whatsapp/sessions
 
-### 4. Get session snapshots
-GET {{baseUrl}}/whatsapp/snapshots
-
-### 5. Close a connection
+### 6. Close a connection
 # Use this to properly log out and close a WhatsApp connection
 DELETE {{baseUrl}}/whatsapp/sessions/{{sessionId}}
 
+
+### 8. Get all groups for a client
+# Retrieve all WhatsApp groups the connected account is part of
+GET {{baseUrl}}/whatsapp/groups?clientId={{clientId}}
+
+### 9. Get all archived groups for a client
+# Retrieve all archived WhatsApp groups for the connected account
+GET {{baseUrl}}/whatsapp/groups/archived?clientId={{clientId}}
+
+### 10. Delete all messages from all archived groups
+# Delete all messages from every archived group
+DELETE {{baseUrl}}/whatsapp/delete/archive/all?clientId={{clientId}}
+
+### 11. Delete messages from specific groups
+# Delete all messages from specified group IDs
+DELETE {{baseUrl}}/whatsapp/delete/group
+Content-Type: application/json
+
+{
+  "clientId": "{{clientId}}",
+  "groupIds": [
+    "120363123456789012@g.us",
+    "120363987654321098@g.us"
+  ]
+}
+
+### 12. Send message to specific groups
+# Send a message to multiple groups at once
+POST {{baseUrl}}/whatsapp/send/group
+Content-Type: application/json
+
+{
+  "clientId": "{{clientId}}",
+  "groupIds": [
+    "120363123456789012@g.us",
+    "120363987654321098@g.us"
+  ],
+  "message": "Hello everyone! This is a group message sent at {{$datetime iso8601}}"
+}
+
 ### ====== MESSAGING ======
 
-### Send a text message
+### 13. Send a text message
 # Basic text message - simplest form of message
 POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/messages
 Content-Type: application/json
@@ -52,7 +91,7 @@ Content-Type: application/json
   "type": "text"
 }
 
-### Send a text message to yourself
+### 14. Send a text message to yourself
 # Send a message to the same number used for the connection
 POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/messages
 Content-Type: application/json
@@ -63,7 +102,7 @@ Content-Type: application/json
   "type": "text"
 }
 
-### Send an image message
+### 15. Send an image message
 # Image message with caption
 POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/messages
 Content-Type: application/json
@@ -77,7 +116,7 @@ Content-Type: application/json
   "type": "image"
 }
 
-### Send a document message
+### 16. Send a document message
 # PDF document with custom filename
 POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/messages
 Content-Type: application/json
@@ -92,7 +131,7 @@ Content-Type: application/json
   "type": "document"
 }
 
-### Send a location message
+### 17. Send a location message
 # Coordinates with a location name
 POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/messages
 Content-Type: application/json
@@ -109,7 +148,7 @@ Content-Type: application/json
 
 ### ====== BULK MESSAGING ======
 
-### Send bulk text messages
+### 18. Send bulk text messages
 # Send the same message to multiple recipients
 POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/bulk-messages
 Content-Type: application/json
@@ -120,7 +159,7 @@ Content-Type: application/json
   "type": "text"
 }
 
-### Send bulk image messages
+### 19. Send bulk image messages
 POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/bulk-messages
 Content-Type: application/json
 
@@ -135,7 +174,7 @@ Content-Type: application/json
 
 ### ====== SESSION MANAGEMENT ======
 
-### Create a new WhatsApp connection with custom session name
+### 20. Create a new WhatsApp connection with custom session name
 # Create a different session for another phone number or account
 @customSession = business_account
 POST {{baseUrl}}/whatsapp/sessions/{{customSession}}
@@ -143,6 +182,41 @@ Content-Type: application/json
 
 {
   "phoneNumber": "+972501234567"
+}
+
+### ====== TESTING WORKFLOW FOR PRD ENDPOINTS ======
+
+### Step 1: Connect and get clientId
+# Use either the session-based connection or the PRD connect endpoint
+# The response should include a clientId that you'll use for subsequent requests
+
+### Step 2: Test group retrieval
+# First get all groups to see what groups are available
+GET {{baseUrl}}/whatsapp/groups?clientId=your-actual-client-id
+
+### Step 3: Test archived groups
+# Check if there are any archived groups
+GET {{baseUrl}}/whatsapp/groups/archived?clientId=your-actual-client-id
+
+### Step 4: Test group messaging
+# Send a test message to a specific group (replace with actual group ID)
+POST {{baseUrl}}/whatsapp/send/group
+Content-Type: application/json
+
+{
+  "clientId": "your-actual-client-id",
+  "groupIds": ["actual-group-id@g.us"],
+  "message": "Test message from API"
+}
+
+### Step 5: Test message deletion (USE WITH CAUTION!)
+# Delete messages from specific groups - THIS CANNOT BE UNDONE
+DELETE {{baseUrl}}/whatsapp/delete/group
+Content-Type: application/json
+
+{
+  "clientId": "your-actual-client-id",
+  "groupIds": ["test-group-id@g.us"]
 }
 
 ### TROUBLESHOOTING TIPS:
@@ -158,6 +232,23 @@ Content-Type: application/json
 # 3. If messages aren't being delivered:
 #    - Verify the connection status is "connected"
 #    - Check that the recipient number is correctly formatted
+#
+# 4. For PRD endpoints:
+#    - Make sure to use the correct clientId from the connection response
+#    - Group IDs should be in the format: "123456789@g.us"
+#    - Be careful with delete operations - they cannot be undone
+#
+# 5. Group ID format:
+#    - Individual chats: "1234567890@s.whatsapp.net"
+#    - Group chats: "1234567890-1234567890@g.us"
+
+### IMPORTANT NOTES FOR PRD ENDPOINTS:
+# - The clientId is returned when you create a connection
+# - Group IDs can be obtained from the /groups endpoint
+# - Message deletion is permanent and cannot be undone
+# - Always test with non-important groups first
+# - Some operations may take time for large groups
 
 ### Session created on: 2025-05-30 11:34:02
 ### Current User: zushar
+### Updated: {{$datetime 'YYYY-MM-DD HH:mm:ss'}} with PRD endpoints
