@@ -115,7 +115,7 @@ POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/bulk-messages
 Content-Type: application/json
 
 {
-  "recipients": ["{{phoneNumber}}", "972501234567"],
+  "recipients": ["{{phoneNumber}}", "972542370954"],
   "content": "This is a bulk message test. Time: {{$datetime 'YYYY-MM-DD HH:mm:ss'}}",
   "type": "text"
 }

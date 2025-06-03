@@ -31,6 +31,7 @@ declare global {
   }
 
   export type ChatData = {
+    metadata: Record<string, unknown>;
     chatId: string; // The unique chat ID (WhatsApp JID)
     messages: proto.IWebMessageInfo[]; // Array of message objects for this chat
   };
@@ -61,3 +62,4 @@ export interface SyncAction {
 
 // This file only declares globals
 export { };
+

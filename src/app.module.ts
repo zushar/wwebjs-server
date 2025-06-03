@@ -3,7 +3,8 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BaileysModule } from './baileys/baileys.module';
-import { ChatData, MessageData } from './baileys/entityes/chat-data.entity';
+import { ChatEntity } from './baileys/entityes/chat.entity';
+import { MessageEntity } from './baileys/entityes/message.entity';
 import { LoggingModule } from './logging/logging.module';
 import { RequestLoggerMiddleware } from './logging/request-logger.middleware';
 import { WwebjsModule } from './wwebjs/wwebjs.module';
@@ -18,7 +19,7 @@ import { WwebjsModule } from './wwebjs/wwebjs.module';
       username: process.env.DB_USERNAME || 'postgres',
       password: process.env.DB_PASSWORD || 'postgres',
       database: process.env.DB_DATABASE || 'whatsapp',
-      entities: [ChatData, MessageData],
+      entities: [ChatEntity, MessageEntity],
       synchronize: process.env.NODE_ENV !== 'production', // Auto-create tables in dev
     }),
     WwebjsModule,

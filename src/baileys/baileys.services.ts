@@ -29,8 +29,6 @@ export class BaileysService {
     phoneNumber: string,
     user: string = 'zushar',
   ): Promise<{ status: string }> {
-    this.chatService.initializeSessionChatStore(sessionId);
-
     return this.connectionService.createConnection(
       sessionId,
       phoneNumber,
@@ -78,9 +76,5 @@ export class BaileysService {
       content,
       type,
     );
-  }
-
-  getChatStoreSnapshot(): Record<string, Record<string, any>> {
-    return this.chatService.getChatStoreSnapshot();
   }
 }

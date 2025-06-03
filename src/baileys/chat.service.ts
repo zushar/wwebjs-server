@@ -1,156 +1,223 @@
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { proto } from '@whiskeysockets/baileys';
+import { Chat, proto } from '@whiskeysockets/baileys';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { Repository } from 'typeorm';
-import { ChatData } from './entityes/chat-data.entity';
-import {
-  InMemoryChatData,
-  WhatsAppChat,
-} from './interfaces/chat-data.interface';
+import { ChatEntity } from './entityes/chat.entity';
+import { MessageEntity } from './entityes/message.entity';
 
 @Injectable()
 export class ChatService {
-  private chatStore = new Map<string, Map<string, InMemoryChatData>>();
-
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: LoggerService,
-    @InjectRepository(ChatData)
-    private chatRepository: Repository<ChatData>,
+    @InjectRepository(ChatEntity)
+    private chatEntityRepository: Repository<ChatEntity>,
+    @InjectRepository(MessageEntity)
+    private messageEntityRepository: Repository<MessageEntity>,
   ) {}
 
-  initializeSessionChatStore(sessionId: string): void {
-    if (!this.chatStore.has(sessionId)) {
-      this.chatStore.set(sessionId, new Map<string, InMemoryChatData>());
-    }
-  }
-
-  storeChatMessage(sessionId: string, message: proto.IWebMessageInfo): void {
-    const chatId = message.key?.remoteJid ?? 'unknown';
-    if (!this.chatStore.has(sessionId)) {
-      this.chatStore.set(sessionId, new Map<string, InMemoryChatData>());
-    }
-    const sessionChats = this.chatStore.get(sessionId)!;
-    if (!sessionChats.has(chatId)) {
-      sessionChats.set(chatId, {
-        chatId,
-        messages: [],
-      });
-    }
-    const chatData = sessionChats.get(chatId)!;
-    chatData.messages.push(message);
-  }
-
-  async storeChat(sessionId: string, chat: WhatsAppChat): Promise<void> {
-    const chatId = `${sessionId}-${chat.id}`;
-
+  /**
+   * Store a chat message directly in the database
+   */
+  async storeChatMessage(
+    sessionId: string,
+    message: proto.IWebMessageInfo,
+  ): Promise<void> {
     try {
-      // Create the entity with type safety
-      const chatEntity = new ChatData();
-      chatEntity.id = chatId;
-      chatEntity.sessionId = sessionId;
-      chatEntity.chatId = chat.id;
-
-      // Type-safe group detection - either use the provided property or infer from ID
-      const isGroup =
-        typeof chat.isGroup === 'boolean'
-          ? chat.isGroup
-          : chat.id.endsWith('@g.us');
-
-      // Type-safe archive detection using the correct property name
-      let isArchived = false;
-
-      // First check the standard property from Baileys
-      if (typeof chat.archived === 'boolean') {
-        isArchived = chat.archived;
-      }
-      // Check for settings container if available
-      else if (
-        chat.settings &&
-        typeof chat.settings === 'object' &&
-        chat.settings !== null &&
-        typeof chat.settings.isArchived === 'boolean'
-      ) {
-        isArchived = chat.settings.isArchived;
+      const chatId = message.key?.remoteJid;
+      if (!chatId) {
+        this.logger.warn('Cannot store message: missing remoteJid');
+        return;
       }
 
-      chatEntity.metadata = {
-        name: chat.name || '',
-        unreadCount: chat.unreadCount ?? 0,
-        isGroup,
-        isArchived,
-      };
-      chatEntity.lastMessageAt = new Date();
+      // Make sure the chat exists
+      await this.ensureChatExists(sessionId, chatId);
 
-      // Type-safe debug logging
-      const debugInfo = {
-        chatId,
-        archived:
-          typeof chat.archived === 'boolean' ? chat.archived : 'not set',
-        settingsArchived: chat.settings?.isArchived,
-        rawId: chat.id,
-      };
+      // Create message entity
+      const messageEntity = new MessageEntity();
+      messageEntity.sessionId = sessionId;
+      messageEntity.chatId = chatId;
+      messageEntity.id = message.key.id || `local-${Date.now()}`;
+      messageEntity.fromMe = message.key.fromMe || false;
+      messageEntity.sender = message.key.participant || chatId;
 
-      this.logger.log(
-        `Chat ${chatId} archive properties: ${JSON.stringify(debugInfo)}`,
-        'ChatService',
-      );
-
-      // Check if entity exists first
-      const exists = await this.chatRepository.findOne({
-        where: { id: chatId },
-      });
-
-      if (exists) {
-        // Update existing entity
-        await this.chatRepository.update(
-          { id: chatId },
-          {
-            metadata: chatEntity.metadata,
-            lastMessageAt: chatEntity.lastMessageAt,
-          },
-        );
-      } else {
-        // Create new entity
-        await this.chatRepository.save(chatEntity);
+      // Extract text if available
+      if (message.message) {
+        if (message.message.conversation) {
+          messageEntity.text = message.message.conversation;
+        } else if (message.message.extendedTextMessage?.text) {
+          messageEntity.text = message.message.extendedTextMessage.text;
+        }
       }
+
+      messageEntity.timestamp = message.messageTimestamp
+        ? Number(message.messageTimestamp)
+        : Date.now() / 1000;
+
+      messageEntity.rawData = message;
+
+      await this.messageEntityRepository.save(messageEntity);
+
+      // Update the last message info in the chat
+      await this.updateChatLastMessage(sessionId, chatId, messageEntity);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      this.logger.error(`Failed to store chat ${chatId}:`, err);
+      this.logger.error(`Failed to store chat message:`, err);
     }
   }
 
-  async updateChatArchiveStatus(
+  /**
+   * Make sure a chat exists in the database
+   */
+  private async ensureChatExists(
+    sessionId: string,
+    chatId: string,
+  ): Promise<ChatEntity> {
+    let chat = await this.chatEntityRepository.findOne({
+      where: { sessionId, id: chatId },
+    });
+
+    if (!chat) {
+      chat = new ChatEntity();
+      chat.sessionId = sessionId;
+      chat.id = chatId;
+      chat.name = '';
+      chat.isGroup = chatId.endsWith('@g.us');
+
+      await this.chatEntityRepository.save(chat);
+    }
+
+    return chat;
+  }
+
+  /**
+   * Update the last message information for a chat
+   */
+  private async updateChatLastMessage(
+    sessionId: string,
+    chatId: string,
+    message: MessageEntity,
+  ): Promise<void> {
+    await this.chatEntityRepository.update(
+      { sessionId, id: chatId },
+      {
+        lastMessageId: message.id,
+        lastMessageText: message.text || '(media message)',
+        lastMessageTimestamp: message.timestamp,
+        conversationTimestamp: message.timestamp,
+      },
+    );
+  }
+
+  /**
+   * Stores a chat using the ChatEntity
+   */
+  async storeEnhancedChat(sessionId: string, chat: Chat): Promise<ChatEntity> {
+    try {
+      // Try to find an existing chat entity
+      let chatEntity = await this.chatEntityRepository.findOne({
+        where: {
+          sessionId,
+          id: chat.id,
+        },
+      });
+
+      // If not found, create a new one
+      if (!chatEntity) {
+        chatEntity = new ChatEntity();
+        chatEntity.sessionId = sessionId;
+        chatEntity.id = chat.id;
+      }
+
+      // Update the entity using our helper method
+      chatEntity.updateFromBaileysChat(chat);
+
+      // Save to database
+      return await this.chatEntityRepository.save(chatEntity);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.error(`Failed to store enhanced chat ${chat.id}:`, err);
+      throw err;
+    }
+  }
+
+  /**
+   * Get a chat by its JID
+   */
+  async getChatByJid(
+    sessionId: string,
+    jid: string,
+  ): Promise<ChatEntity | null> {
+    return this.chatEntityRepository.findOne({
+      where: { sessionId, id: jid },
+    });
+  }
+
+  /**
+   * Get all chats for a session with optional filtering
+   */
+  async getChats(
+    sessionId: string,
+    options?: {
+      archived?: boolean;
+      limit?: number;
+      offset?: number;
+    },
+  ): Promise<[ChatEntity[], number]> {
+    const query = this.chatEntityRepository
+      .createQueryBuilder('chat')
+      .where('chat.sessionId = :sessionId', { sessionId });
+
+    if (options?.archived !== undefined) {
+      query.andWhere('chat.archived = :archived', {
+        archived: options.archived,
+      });
+    }
+
+    // Add sorting: pinned chats first, then by last message timestamp
+    query
+      .orderBy('chat.pinned', 'ASC', 'NULLS LAST')
+      .addOrderBy('chat.conversationTimestamp', 'DESC');
+
+    if (options?.limit) {
+      query.take(options.limit);
+    }
+
+    if (options?.offset) {
+      query.skip(options.offset);
+    }
+
+    return query.getManyAndCount();
+  }
+
+  /**
+   * Updates the archive status of a chat
+   */
+  async updateArchiveStatus(
     sessionId: string,
     chatId: string,
     isArchived: boolean,
   ): Promise<void> {
     try {
-      const fullChatId = `${sessionId}-${chatId}`;
-      const existingChat = await this.chatRepository.findOne({
-        where: { id: fullChatId },
+      // Find in the ChatEntity
+      const chatEntity = await this.chatEntityRepository.findOne({
+        where: { sessionId, id: chatId },
       });
 
-      if (existingChat) {
-        // Properly type the metadata object
-        const metadata = existingChat.metadata as Record<string, unknown>;
-
-        // Create a new properly typed metadata object
-        const updatedMetadata = {
-          ...metadata,
-          isArchived,
-        };
-
-        // Update the entity
-        existingChat.metadata = updatedMetadata;
-
-        // Use save instead of update to handle complex object types
-        await this.chatRepository.save(existingChat);
-
+      if (chatEntity) {
+        // Update in the structure
+        chatEntity.archived = isArchived;
+        await this.chatEntityRepository.save(chatEntity);
         this.logger.log(
           `Updated archive status for ${chatId} to ${isArchived}`,
-          'ChatService',
+        );
+      } else {
+        // Create the chat if it doesn't exist
+        await this.ensureChatExists(sessionId, chatId);
+        await this.chatEntityRepository.update(
+          { sessionId, id: chatId },
+          { archived: isArchived },
         );
       }
     } catch (error) {
@@ -159,19 +226,6 @@ export class ChatService {
     }
   }
 
-  getChatStoreSnapshot(): Record<string, Record<string, any>> {
-    const snapshot: Record<string, Record<string, any>> = {};
-    for (const [sessionId, chats] of this.chatStore.entries()) {
-      snapshot[sessionId] = {};
-      for (const [chatId, chatData] of chats.entries()) {
-        snapshot[sessionId][chatId] = {
-          chatId: chatData.chatId,
-          messageCount: chatData.messages.length,
-        };
-      }
-    }
-    return snapshot;
-  }
   /**
    * Updates group participants in the database
    */
@@ -182,195 +236,82 @@ export class ChatService {
     action: 'add' | 'remove' | 'promote' | 'demote' | 'modify',
   ): Promise<void> {
     try {
-      // Get the combined ID format you're using
-      const fullChatId = `${sessionId}-${groupId}`;
-
       // Find the existing chat
-      const existingChat = await this.chatRepository.findOne({
-        where: { id: fullChatId },
+      const existingChat = await this.chatEntityRepository.findOne({
+        where: { sessionId, id: groupId },
       });
 
       if (!existingChat) {
         this.logger.warn(
           `Group ${groupId} not found for participant update in session ${sessionId}`,
-          'ChatService',
         );
         return;
       }
 
-      // Get metadata to safely modify it
-      const metadata = existingChat.metadata;
+      // Initialize metadata if needed
+      if (!existingChat.metadata) {
+        existingChat.metadata = {
+          participants: [],
+        };
+      }
 
       // Initialize participants array if it doesn't exist
-      if (!metadata.participants) {
-        metadata.participants = [];
+      if (!existingChat.metadata.participants) {
+        existingChat.metadata.participants = [];
       }
 
       // Update based on action
       switch (action) {
         case 'add':
           for (const jid of participants) {
-            if (!metadata.participants.some((p: any) => p.id === jid)) {
-              metadata.participants.push({
+            if (!existingChat.metadata.participants.some((p) => p.id === jid)) {
+              existingChat.metadata.participants.push({
                 id: jid,
                 isAdmin: false,
-                addedAt: new Date().toISOString(),
+                isSuperAdmin: false,
               });
             }
           }
           break;
         case 'remove':
-          metadata.participants = metadata.participants.filter(
-            (p: any) => !participants.includes(p.id),
-          );
+          existingChat.metadata.participants =
+            existingChat.metadata.participants.filter(
+              (p) => !participants.includes(p.id),
+            );
           break;
         case 'promote':
         case 'demote':
           for (const jid of participants) {
-            const participant = metadata.participants.find(
-              (p: any) => p.id === jid,
+            const participant = existingChat.metadata.participants.find(
+              (p) => p.id === jid,
             );
             if (participant) {
               participant.isAdmin = action === 'promote';
-              participant.lastStatusChange = new Date().toISOString();
             }
           }
           break;
         case 'modify':
-          // Handle modify action - typically this involves updating participant attributes
+          // Handle modify action
           for (const jid of participants) {
-            const participant = metadata.participants.find(
-              (p: any) => p.id === jid,
+            const participant = existingChat.metadata.participants.find(
+              (p) => p.id === jid,
             );
             if (participant) {
-              participant.lastModified = new Date().toISOString();
               // You might need to handle specific modifications if Baileys provides them
             }
           }
       }
 
-      // Update metadata and save
-      existingChat.metadata = metadata;
-      await this.chatRepository.save(existingChat);
+      // Save the updated chat
+      await this.chatEntityRepository.save(existingChat);
 
       this.logger.log(
         `Updated ${participants.length} participants for group ${groupId} in session ${sessionId}: ${action}`,
-        'ChatService',
       );
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       this.logger.error(
         `Failed to update participants for group ${groupId} in session ${sessionId}:`,
-        err,
-      );
-    }
-  }
-
-  /**
-   * Updates contact information in the database
-   * Note: This is a placeholder implementation. You should create a ContactData entity
-   * and repository for a proper implementation.
-   */
-  updateContact(sessionId: string, contactUpdate: any): void {
-    try {
-      this.logger.log(
-        `Contact update for ${contactUpdate.id} in session ${sessionId}`,
-        'ChatService',
-      );
-
-      // This is where you would update the contact in your database
-      // Since you don't have a Contact entity/repository yet, this is a placeholder
-
-      // Implementation recommendation:
-      // 1. Create a ContactData entity (see definition above)
-      // 2. Add a repository injection to this service:
-      //    @InjectRepository(ContactData) private contactRepository: Repository<ContactData>
-      // 3. Implement the update logic similar to:
-      /*
-    const contactId = `${sessionId}-${contactUpdate.id}`;
-    const existingContact = await this.contactRepository.findOne({
-      where: { id: contactId },
-    });
-    
-    if (existingContact) {
-      // Update existing contact
-      existingContact.name = contactUpdate.name || existingContact.name;
-      existingContact.pushName = contactUpdate.notify || existingContact.pushName;
-      existingContact.updatedAt = new Date();
-      
-      if (contactUpdate.imgUrl) {
-        existingContact.metadata = {
-          ...existingContact.metadata,
-          imgUrl: contactUpdate.imgUrl
-        };
-      }
-      
-      await this.contactRepository.save(existingContact);
-    }
-    */
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.logger.error(
-        `Failed to update contact ${contactUpdate.id} in session ${sessionId}:`,
-        err,
-      );
-    }
-  }
-
-  /**
-   * Stores a new contact in the database
-   * Note: This is a placeholder implementation. You should create a ContactData entity
-   * and repository for a proper implementation.
-   */
-  storeContact(sessionId: string, contact: any): void {
-    try {
-      this.logger.log(
-        `Storing contact ${contact.id} in session ${sessionId}`,
-        'ChatService',
-      );
-
-      // This is where you would store the contact in your database
-      // Since you don't have a Contact entity/repository yet, this is a placeholder
-
-      // Implementation recommendation:
-      // 1. Create a ContactData entity (see definition above)
-      // 2. Add a repository injection to this service:
-      //    @InjectRepository(ContactData) private contactRepository: Repository<ContactData>
-      // 3. Implement the storage logic similar to:
-      /*
-    const contactId = `${sessionId}-${contact.id}`;
-    
-    // Check if contact already exists
-    const existingContact = await this.contactRepository.findOne({
-      where: { id: contactId },
-    });
-    
-    if (!existingContact) {
-      // Create new contact entity
-      const contactEntity = new ContactData();
-      contactEntity.id = contactId;
-      contactEntity.sessionId = sessionId;
-      contactEntity.jid = contact.id;
-      contactEntity.name = contact.name || '';
-      contactEntity.pushName = contact.notify || '';
-      contactEntity.metadata = {
-        imgUrl: contact.imgUrl || null,
-        status: contact.status || null,
-        statusTimestamp: contact.statusTimestamp || null,
-        businessProfile: contact.verifiedName ? {
-          verifiedName: contact.verifiedName,
-          // other business fields
-        } : null
-      };
-      contactEntity.updatedAt = new Date();
-      
-      await this.contactRepository.save(contactEntity);
-    }
-    */
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.logger.error(
-        `Failed to store contact ${contact.id} in session ${sessionId}:`,
         err,
       );
     }

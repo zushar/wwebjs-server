@@ -1,19 +1,65 @@
-import { Inject, Injectable, LoggerService, forwardRef } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, LoggerService } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { AnyMessageContent, proto } from '@whiskeysockets/baileys';
+import {
+  AnyMessageContent,
+  proto,
+  WAMessageUpdate,
+} from '@whiskeysockets/baileys';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { Repository } from 'typeorm';
-import { MessageParserUtil } from '../utils/message-parser.util';
 import { ConnectionService } from './connection.service';
-import { MessageData } from './entityes/chat-data.entity';
+import { MessageEntity } from './entityes/message.entity';
+
+// Define message types for better type safety
+export type MessageTypes =
+  | 'text'
+  | 'image'
+  | 'document'
+  | 'video'
+  | 'audio'
+  | 'location';
+
+// Interface for message results
+export interface MessageResult {
+  to: string;
+  success: boolean;
+  error?: string;
+}
+
+// Custom interfaces for our message updates - extending the Baileys types
+interface MessageReaction {
+  key?: {
+    participant?: string;
+    remoteJid?: string;
+  };
+  text?: string;
+}
+
+interface ExtendedMessageUpdate {
+  reactions?: MessageReaction[];
+  edit?: {
+    text?: string;
+  };
+  delete?: boolean;
+  status?: string;
+}
+
+// Custom interfaces for receipts
+interface ExtendedMessageReceipt {
+  readTimestamp?: number;
+  deliveredTimestamp?: number;
+  playedTimestamp?: number;
+  type?: string;
+  [key: string]: unknown;
+}
 
 @Injectable()
 export class MessageService {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: LoggerService,
-    @InjectRepository(MessageData)
-    private messageRepository: Repository<MessageData>,
+    @InjectRepository(MessageEntity)
+    private messageRepository: Repository<MessageEntity>,
     @Inject(forwardRef(() => ConnectionService))
     private connectionService: ConnectionService,
   ) {}
@@ -204,32 +250,20 @@ export class MessageService {
     if (!chatId) return;
 
     try {
-      // Extract message content based on message type
-      const messageContent = MessageParserUtil.extractMessageContent(message);
-
-      // Create the entity first to avoid type issues
-      const messageEntity = new MessageData();
-      messageEntity.id = message.key.id;
+      // Create a new message entity
+      const messageEntity = new MessageEntity();
       messageEntity.sessionId = sessionId;
       messageEntity.chatId = chatId;
-      messageEntity.fromMe = Boolean(message.key.fromMe);
-      messageEntity.senderJid =
-        message.key.participant ||
-        message.participant ||
-        message.key.remoteJid ||
-        undefined;
-      messageEntity.messageContent = messageContent;
+      messageEntity.id = message.key.id;
 
-      // Handle messageTimestamp properly
-      const timestamp =
-        typeof message.messageTimestamp === 'number'
-          ? new Date(message.messageTimestamp * 1000)
-          : new Date();
-      messageEntity.timestamp = timestamp;
+      // Use the helper method to populate all fields
+      messageEntity.updateFromBaileysMessage(message);
 
+      // Save to database
       await this.messageRepository.save(messageEntity);
     } catch (error) {
-      this.logger.error(`Failed to store message ${message.key.id}:`, error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.error(`Failed to store message ${message.key.id}:`, err);
     }
   }
 
@@ -253,6 +287,7 @@ export class MessageService {
     }
     return {};
   }
+
   async getMessageByKey(
     sessionId: string,
     remoteJid: string,
@@ -261,7 +296,7 @@ export class MessageService {
   ): Promise<proto.IMessage | undefined> {
     try {
       // Find the message in the database
-      const messageData = await this.messageRepository.findOne({
+      const messageEntity = await this.messageRepository.findOne({
         where: {
           sessionId,
           chatId: remoteJid,
@@ -270,20 +305,23 @@ export class MessageService {
         },
       });
 
-      if (!messageData || !messageData.messageContent) {
+      if (!messageEntity || !messageEntity.rawData) {
         return undefined;
       }
 
-      // Return the message content
-      return messageData.messageContent as unknown as proto.IMessage;
+      // Type check and access the message property safely
+      const rawData = messageEntity.rawData as { message?: proto.IMessage };
+      return rawData?.message;
     } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
       this.logger.error(
         `Failed to retrieve message (${id}) from database:`,
-        error,
+        err,
       );
       return undefined;
     }
   }
+
   async deleteAllMessagesInChat(
     sessionId: string,
     chatId: string,
@@ -298,9 +336,10 @@ export class MessageService {
         'MessageService',
       );
     } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
       this.logger.error(
         `Failed to delete messages for chat ${chatId} in session ${sessionId}:`,
-        error,
+        err,
       );
     }
   }
@@ -315,7 +354,7 @@ export class MessageService {
     fromMe?: boolean,
   ): Promise<void> {
     try {
-      const conditions: any = {
+      const conditions: Record<string, unknown> = {
         sessionId,
         chatId,
         id: messageId,
@@ -331,9 +370,10 @@ export class MessageService {
         'MessageService',
       );
     } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
       this.logger.error(
         `Failed to delete message ${messageId} from chat ${chatId}:`,
-        error,
+        err,
       );
     }
   }
@@ -345,7 +385,7 @@ export class MessageService {
     sessionId: string,
     chatId: string,
     messageId: string,
-    update: any,
+    update: WAMessageUpdate & ExtendedMessageUpdate,
   ): Promise<void> {
     try {
       const message = await this.messageRepository.findOne({
@@ -365,59 +405,65 @@ export class MessageService {
       }
 
       // Handle different types of updates
-      if (update.reactions) {
-        // If the messageContent is stored as a string, parse it first
-        let content =
-          typeof message.messageContent === 'string'
-            ? JSON.parse(message.messageContent)
-            : message.messageContent;
-
-        // Update reactions
-        content = {
-          ...content,
-          reactions: update.reactions,
-        };
-
-        message.messageContent = content;
+      if (update.reactions && Array.isArray(update.reactions)) {
+        // Type-safe access to reactions
+        const typedReactions = update.reactions;
+        message.reactions = typedReactions.map((reaction) => ({
+          sender: reaction.key?.participant || reaction.key?.remoteJid || '',
+          emoji: reaction.text || '👍',
+        }));
       }
 
       if (update.edit) {
-        // Handle edited message content
-        let content =
-          typeof message.messageContent === 'string'
-            ? JSON.parse(message.messageContent)
-            : message.messageContent;
+        // Handle edited message by storing both versions
+        const originalText = message.text;
+        message.text = update.edit.text || message.text;
 
-        // Store both original and edited content
-        content = {
-          ...content,
-          editHistory: content.editHistory || [],
-          editedAt: new Date().toISOString(),
-        };
+        // Store edit history if we have raw data
+        if (message.rawData) {
+          const typedRawData = message.rawData as Record<string, unknown>;
 
-        // Add original to history before replacing
-        content.editHistory.push({
-          previous: { ...content },
-          timestamp: new Date().toISOString(),
-        });
+          // Initialize edit history if it doesn't exist
+          if (!typedRawData.editHistory) {
+            typedRawData.editHistory = [];
+          }
 
-        // Update with new content
-        Object.assign(content, update.edit);
+          // Add the original to history
+          const editHistory = typedRawData.editHistory as Array<unknown>;
+          editHistory.push({
+            previousText: originalText,
+            timestamp: new Date().toISOString(),
+          });
 
-        message.messageContent = content;
+          // Update edited timestamp
+          typedRawData.editedAt = new Date().toISOString();
+
+          // Update the raw data
+          message.rawData = typedRawData;
+        }
       }
 
-      // Add other update handlers as needed
+      // If the message is marked as deleted
+      if (update.delete) {
+        message.isDeleted = true;
+      }
 
+      // Handle standard Baileys message updates
+      if (update.status) {
+        message.status = update.status;
+      }
+
+      // Save updated message
       await this.messageRepository.save(message);
       this.logger.log(
         `Updated message ${messageId} in chat ${chatId}`,
         'MessageService',
       );
     } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
       this.logger.error(
         `Failed to update message ${messageId} in chat ${chatId}:`,
-        error,
+        err,
       );
     }
   }
@@ -429,7 +475,7 @@ export class MessageService {
     sessionId: string,
     chatId: string,
     messageId: string,
-    receipt: any,
+    receipt: ExtendedMessageReceipt,
   ): Promise<void> {
     try {
       const message = await this.messageRepository.findOne({
@@ -448,21 +494,37 @@ export class MessageService {
         return;
       }
 
-      // Update receipt information
-      const content =
-        typeof message.messageContent === 'string'
-          ? JSON.parse(message.messageContent)
-          : message.messageContent;
+      // Update the status based on receipt type
+      if (receipt.readTimestamp) {
+        message.status = 'read';
+      } else if (receipt.deliveredTimestamp) {
+        message.status = 'delivered';
+      } else if (receipt.playedTimestamp) {
+        message.status = 'played';
+      }
 
-      // Store receipt information
-      message.messageContent = {
-        ...content,
-        receipt: {
-          ...content.receipt,
-          ...receipt,
-          updatedAt: new Date().toISOString(),
-        },
-      };
+      // Store the full receipt data in rawData for reference
+      if (message.rawData) {
+        const typedRawData = message.rawData as Record<string, unknown>;
+
+        if (!typedRawData.receipts) {
+          typedRawData.receipts = [];
+        }
+
+        const receipts = typedRawData.receipts as Array<
+          Record<string, unknown>
+        >;
+        receipts.push({
+          timestamp: new Date().toISOString(),
+          readTimestamp: receipt.readTimestamp,
+          deliveredTimestamp: receipt.deliveredTimestamp,
+          playedTimestamp: receipt.playedTimestamp,
+          type: receipt.type,
+        });
+
+        // Update the raw data
+        message.rawData = typedRawData;
+      }
 
       await this.messageRepository.save(message);
       this.logger.log(
@@ -470,10 +532,112 @@ export class MessageService {
         'MessageService',
       );
     } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
       this.logger.error(
         `Failed to update receipt for message ${messageId} in chat ${chatId}:`,
-        error,
+        err,
       );
+    }
+  }
+
+  /**
+   * Get messages for a chat with pagination
+   */
+  async getChatMessages(
+    sessionId: string,
+    chatId: string,
+    options: {
+      limit?: number;
+      before?: number; // timestamp
+      fromMe?: boolean;
+    } = {},
+  ): Promise<MessageEntity[]> {
+    try {
+      const query = this.messageRepository
+        .createQueryBuilder('message')
+        .where('message.sessionId = :sessionId', { sessionId })
+        .andWhere('message.chatId = :chatId', { chatId })
+        .orderBy('message.timestamp', 'DESC');
+
+      if (options.before) {
+        query.andWhere('message.timestamp < :before', {
+          before: options.before,
+        });
+      }
+
+      if (options.fromMe !== undefined) {
+        query.andWhere('message.fromMe = :fromMe', { fromMe: options.fromMe });
+      }
+
+      if (options.limit) {
+        query.take(options.limit);
+      }
+
+      return query.getMany();
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.error(
+        `Failed to get messages for chat ${chatId} in session ${sessionId}:`,
+        err,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Delete messages from a chat that match specific conditions
+   */
+  async deleteMessagesConditional(
+    sessionId: string,
+    chatId: string,
+    conditions: {
+      before?: number; // timestamp
+      fromMe?: boolean;
+      isDeleted?: boolean;
+      mediaType?: string;
+    } = {},
+  ): Promise<number> {
+    try {
+      const queryBuilder = this.messageRepository
+        .createQueryBuilder('message')
+        .delete()
+        .from(MessageEntity)
+        .where('message.sessionId = :sessionId', { sessionId })
+        .andWhere('message.chatId = :chatId', { chatId });
+
+      if (conditions.before) {
+        queryBuilder.andWhere('message.timestamp < :before', {
+          before: conditions.before,
+        });
+      }
+
+      if (conditions.fromMe !== undefined) {
+        queryBuilder.andWhere('message.fromMe = :fromMe', {
+          fromMe: conditions.fromMe,
+        });
+      }
+
+      if (conditions.isDeleted !== undefined) {
+        queryBuilder.andWhere('message.isDeleted = :isDeleted', {
+          isDeleted: conditions.isDeleted,
+        });
+      }
+
+      if (conditions.mediaType) {
+        queryBuilder.andWhere(`message.mediaInfo->>'type' = :mediaType`, {
+          mediaType: conditions.mediaType,
+        });
+      }
+
+      const result = await queryBuilder.execute();
+      return result.affected || 0;
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.error(
+        `Failed to delete messages conditionally for chat ${chatId} in session ${sessionId}:`,
+        err,
+      );
+      return 0;
     }
   }
 }

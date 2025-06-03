@@ -5,11 +5,15 @@ import { BaileysController } from './baileys.controller';
 import { BaileysService } from './baileys.services';
 import { ChatService } from './chat.service';
 import { ConnectionService } from './connection.service';
-import { ChatData, MessageData } from './entityes/chat-data.entity';
+import { ChatEntity } from './entityes/chat.entity';
+import { MessageEntity } from './entityes/message.entity';
 import { MessageService } from './message.service';
 
 @Module({
-  imports: [LoggingModule, TypeOrmModule.forFeature([ChatData, MessageData])],
+  imports: [
+    LoggingModule,
+    TypeOrmModule.forFeature([ChatEntity, MessageEntity]),
+  ],
   providers: [BaileysService, ConnectionService, MessageService, ChatService],
   controllers: [BaileysController],
   exports: [BaileysService],

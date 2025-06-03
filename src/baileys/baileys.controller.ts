@@ -128,14 +128,4 @@ export class BaileysController {
       throw new HttpException(errorMessage, HttpStatus.BAD_REQUEST);
     }
   }
-  @Get('snapshots')
-  getChatSnapshot() {
-    try {
-      return this.baileysService.getChatStoreSnapshot();
-    } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Failed to get chat snapshot';
-      throw new HttpException(errorMessage, HttpStatus.NOT_FOUND);
-    }
-  }
 }

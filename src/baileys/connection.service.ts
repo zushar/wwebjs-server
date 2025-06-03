@@ -2,6 +2,7 @@ import { Boom } from '@hapi/boom';
 import { Inject, Injectable, LoggerService, forwardRef } from '@nestjs/common';
 import makeWASocket, {
   Browsers,
+  Chat,
   ConnectionState,
   DisconnectReason,
   GroupMetadata,
@@ -22,20 +23,6 @@ import { ChatService } from './chat.service';
 import { InMemoryChatData } from './interfaces/chat-data.interface';
 import { MessageService } from './message.service';
 
-// Define interfaces
-// interface SessionInfo {
-//   phoneNumber: string;
-//   createdAt: string;
-//   createdBy: string;
-// }
-
-// interface Connection {
-//   socket: ReturnType<typeof makeWASocket>;
-//   pairingCode: string | null;
-//   status: 'connecting' | 'pairing' | 'connected' | 'disconnected' | 'blocked';
-//   reconnectAttempts: number;
-// }
-
 @Injectable()
 export class ConnectionService {
   private connections: Map<string, Connection> = new Map();
@@ -49,6 +36,7 @@ export class ConnectionService {
     checkperiod: 120,
     useClones: false,
   });
+  private readonly sessionLogsDir: string;
 
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
@@ -67,10 +55,14 @@ export class ConnectionService {
       throw new Error('Unable to determine working directory');
     }
     this.sessionsDir = path.join(cwd, 'sessions');
+    this.sessionLogsDir = path.join(cwd, 'session_logs');
     this.logger.log(
       `Sessions directory: ${this.sessionsDir}`,
       'ConnectionService',
     );
+    if (!fs.existsSync(this.sessionLogsDir)) {
+      fs.mkdirSync(this.sessionLogsDir, { recursive: true });
+    }
     if (!fs.existsSync(this.sessionsDir)) {
       fs.mkdirSync(this.sessionsDir, { recursive: true });
     }
@@ -164,8 +156,17 @@ export class ConnectionService {
       },
       cachedGroupMetadata: async (jid): Promise<GroupMetadata | undefined> => {
         // Try to get from cache first
-        const cached = this.groupCache.get(jid) as GroupMetadata | undefined;
-        if (cached) return cached;
+        const cached = this.groupCache.get(jid);
+        if (
+          cached &&
+          typeof cached === 'object' &&
+          cached !== null &&
+          'id' in cached &&
+          'subject' in cached &&
+          'participants' in cached
+        ) {
+          return cached as GroupMetadata;
+        }
 
         // If not in cache, fetch it and store for future use
         try {
@@ -362,349 +363,182 @@ export class ConnectionService {
         });
       });
 
-      // messaging-history.set
+      // Handle messaging-history.set
       connection.socket.ev.on(
         'messaging-history.set',
-        ({
-          chats: newChats,
-          contacts: newContacts,
-          messages: newMessages,
-          syncType,
-        }) => {
-          this.whatsappLogger.logConnectionEvent(sessionId, 'history-set', {
-            syncType,
-            chatsCount: newChats.length,
-            contactsCount: newContacts.length,
-            messagesCount: newMessages.length,
-          });
+        this.wrapAsyncHandler(async ({ chats: newChats }) => {
+          // Process new chats - filter for groups only
+          if (Array.isArray(newChats)) {
+            const groupChats = newChats.filter((chat) =>
+              chat.id.endsWith('@g.us'),
+            );
 
-          // Store the chats, contacts, and messages in the chat store
-          if (!this.chatStore.has(sessionId)) {
-            this.chatStore.set(sessionId, new Map<string, InMemoryChatData>());
-          }
-          const sessionChats = this.chatStore.get(sessionId)!;
-
-          // Process and log chats
-          if (newChats.length > 0) {
-            this.whatsappLogger.logConnectionEvent(sessionId, 'new-chats', {
-              count: newChats.length,
-              chatIds: newChats.map((chat) => chat.id).slice(0, 10), // Log first 10 only
-            });
-
-            // Store each chat in database
-            for (const chat of newChats) {
-              void this.chatService.storeChat(sessionId, chat);
-
-              // Also add to in-memory store
-              if (!sessionChats.has(chat.id)) {
-                sessionChats.set(chat.id, {
-                  chatId: chat.id,
-                  messages: [],
-                });
+            for (const chat of groupChats) {
+              try {
+                await this.chatService.storeEnhancedChat(sessionId, chat);
+              } catch (error) {
+                this.logger.error(
+                  `Failed to store group chat ${chat.id}:`,
+                  error,
+                );
               }
             }
           }
-
-          // Process and log contacts
-          if (newContacts.length > 0) {
-            this.whatsappLogger.logConnectionEvent(sessionId, 'new-contacts', {
-              count: newContacts.length,
-              contactIds: newContacts.map((contact) => contact.id).slice(0, 10), // Log first 10 only
-            });
-            // Optionally store contacts if needed
-          }
-
-          // Process and log messages
-          if (newMessages.length > 0) {
-            this.whatsappLogger.logConnectionEvent(sessionId, 'new-messages', {
-              count: newMessages.length,
-              messageIds: newMessages
-                .map((msg) => msg.key.id || 'unknown-id')
-                .slice(0, 10), // Log first 10 only
-            });
-
-            // Store each message in database
-            for (const message of newMessages) {
-              void this.messageService.storeMessage(sessionId, message);
-
-              // Also add to in-memory store if we have the chat
-              const chatId = message.key.remoteJid;
-              if (chatId && sessionChats.has(chatId)) {
-                const chatData = sessionChats.get(chatId)!;
-                chatData.messages.push(message);
-              }
-            }
-          }
-        },
+        }),
       );
 
-      // Handle chat updates
-      connection.socket.ev.on('chats.update', (updates) => {
-        this.whatsappLogger.logConnectionEvent(sessionId, 'chats-update', {
-          count: updates.length,
-        });
-
-        for (const update of updates) {
-          // Check if archive status is included in the update
-          if (update.id && 'archive' in update) {
-            const isArchived = Boolean(update.archive);
-            this.whatsappLogger.logConnectionEvent(
-              sessionId,
-              'chat-archive-change',
-              {
-                chatId: update.id,
-                isArchived,
-              },
+      // Handle chat upserts - filter for groups only
+      connection.socket.ev.on(
+        'chats.upsert',
+        this.wrapAsyncHandler(async (newChats) => {
+          if (Array.isArray(newChats)) {
+            const groupChats = newChats.filter((chat) =>
+              chat.id.endsWith('@g.us'),
             );
 
-            // Update the database with new archive status
-            void this.chatService.updateChatArchiveStatus(
-              sessionId,
-              update.id,
-              isArchived,
-            );
+            for (const chat of groupChats) {
+              await this.chatService.storeEnhancedChat(sessionId, chat);
+            }
           }
-        }
-      });
+        }),
+      );
+
+      // Handle chat updates - filter for groups only
+      connection.socket.ev.on(
+        'chats.update',
+        this.wrapAsyncHandler(async (updates: Partial<Chat>[]) => {
+          for (const update of updates) {
+            if (update.id && update.id.endsWith('@g.us')) {
+              // Get the existing chat first
+              const existingChat = await this.chatService.getChatByJid(
+                sessionId,
+                update.id,
+              );
+              if (existingChat) {
+                // Merge the update with existing data
+                const updatedChat = { ...existingChat, ...update } as Chat;
+                await this.chatService.storeEnhancedChat(
+                  sessionId,
+                  updatedChat,
+                );
+              }
+
+              // Handle archive status specially (for backward compatibility)
+              if ('archived' in update) {
+                const isArchived = Boolean(update.archived);
+                await this.chatService.updateArchiveStatus(
+                  sessionId,
+                  update.id,
+                  isArchived,
+                );
+              }
+            }
+          }
+        }),
+      );
 
       // Handle incoming message updates
-      connection.socket.ev.on('messages.upsert', ({ messages }) => {
-        for (const message of messages) {
-          if (!message.key.fromMe) {
-            this.whatsappLogger.logMessageEvent(
-              sessionId,
-              'received',
-              message.key.remoteJid || 'unknown',
-              {
-                messageId: message.key.id,
-                timestamp: message.messageTimestamp,
-              },
-            );
+      // connection.socket.ev.on('messages.upsert', ({ messages, type }) => {
+      //   if (type === 'notify') {
+      //     // These are new messages that should be stored
+      //     for (const message of messages) {
+      //       try {
+      //         // Check for valid message data
+      //         if (message.key?.id && message.key.remoteJid) {
+      //           // Log incoming message (optional)
+      //           this.logger.debug?.(
+      //             `Received message from ${message.key.fromMe ? 'self' : 'others'}: ${message.key.id}`,
+      //             { sessionId, chatJid: message.key.remoteJid },
+      //           );
 
-            // Store in memory
-            this.chatService.storeChatMessage(sessionId, message);
-            // Also store in database
-            void this.messageService.storeMessage(sessionId, message);
-          }
-        }
-      });
-
-      // Handle group updates
-      connection.socket.ev.on('groups.update', (updates) => {
-        this.whatsappLogger.logConnectionEvent(sessionId, 'groups-update', {
-          count: updates.length,
-        });
-
-        for (const update of updates) {
-          const jid = update.id;
-          if (jid && this.groupCache.has(jid)) {
-            const current = this.groupCache.get(jid) as GroupMetadata;
-            if (current) {
-              // Type-safe spread - create a new object with both properties
-              this.groupCache.set(jid, {
-                ...current,
-                ...update,
-              });
-
-              this.whatsappLogger.logConnectionEvent(
-                sessionId,
-                'group-metadata-updated',
-                {
-                  groupId: jid,
-                  updateFields: Object.keys(update).filter((k) => k !== 'id'),
-                },
-              );
-            }
-          }
-        }
-      });
+      //           // Store in database
+      //           void this.messageService.storeMessage(sessionId, message);
+      //         }
+      //       } catch (error) {
+      //         const err =
+      //           error instanceof Error ? error : new Error(String(error));
+      //         this.logger.error(
+      //           `Failed to process incoming message ${message.key?.id || 'unknown'}:`,
+      //           err,
+      //         );
+      //       }
+      //     }
+      //   }
+      // });
 
       // Handle message deletions
-      connection.socket.ev.on('messages.delete', (data) => {
-        if ('all' in data) {
-          // All messages in a chat were deleted
-          const jid = data.jid;
-          this.whatsappLogger.logMessageEvent(sessionId, 'all-deleted', jid, {
-            timestamp: new Date().toISOString(),
-          });
+      // connection.socket.ev.on('messages.delete', (data) => {
+      //   try {
+      //     if ('all' in data && data.jid) {
+      //       // All messages in a chat were deleted
+      //       this.logger.log(
+      //         `All messages deleted in chat ${data.jid}`,
+      //         'MessageService',
+      //       );
+      //       void this.messageService.deleteAllMessagesInChat(
+      //         sessionId,
+      //         data.jid,
+      //       );
+      //     } else if (
+      //       'keys' in data &&
+      //       Array.isArray(data.keys) &&
+      //       data.keys.length > 0
+      //     ) {
+      //       // Specific messages were deleted
+      //       this.logger.log(
+      //         `Specific messages deleted ${data.keys[0]?.remoteJid ? `in chat ${data.keys[0].remoteJid}` : '(unknown chat)'}`,
+      //         'MessageService',
+      //       );
 
-          void this.messageService.deleteAllMessagesInChat(sessionId, jid);
-        } else if ('keys' in data) {
-          // Specific messages were deleted
-          const messageKeys = data.keys;
-          this.whatsappLogger.logMessageEvent(
-            sessionId,
-            'some-deleted',
-            messageKeys[0]?.remoteJid || 'unknown',
-            { count: messageKeys.length },
-          );
-
-          for (const key of messageKeys) {
-            void this.messageService.deleteMessage(
-              sessionId,
-              key.remoteJid || '',
-              key.id || '',
-              key.fromMe === null ? undefined : key.fromMe,
-            );
-          }
-        }
-      });
+      //       for (const key of data.keys) {
+      //         if (key.remoteJid && key.id) {
+      //           void this.messageService.deleteMessage(
+      //             sessionId,
+      //             key.remoteJid,
+      //             key.id,
+      //             key.fromMe === null ? undefined : key.fromMe,
+      //           );
+      //         }
+      //       }
+      //     }
+      //   } catch (error) {
+      //     const err = error instanceof Error ? error : new Error(String(error));
+      //     this.logger.error('Failed to process message deletion event:', err);
+      //   }
+      // });
 
       // Handle message updates (reactions, edits, etc.)
-      connection.socket.ev.on('messages.update', (updates) => {
-        for (const update of updates) {
-          if (update.key && update.update) {
-            this.whatsappLogger.logMessageEvent(
-              sessionId,
-              'updated',
-              update.key.remoteJid || 'unknown',
-              {
-                messageId: update.key.id,
-                updateFields: Object.keys(update.update),
-              },
-            );
+      // connection.socket.ev.on('messages.update', (updates) => {
+      //   for (const update of updates) {
+      //     try {
+      //       if (
+      //         update.key &&
+      //         update.key.remoteJid &&
+      //         update.key.id &&
+      //         update.update
+      //       ) {
+      //         this.logger.debug?.(
+      //           `Message update for ${update.key.id}: ${Object.keys(update.update).join(', ')}`,
+      //           { sessionId, chatJid: update.key.remoteJid },
+      //         );
 
-            void this.messageService.updateMessage(
-              sessionId,
-              update.key.remoteJid || '',
-              update.key.id || '',
-              update.update,
-            );
-          }
-        }
-      });
-
-      // Handle changes in group participants
-      connection.socket.ev.on('group-participants.update', (update) => {
-        const { id, participants, action } = update;
-        this.whatsappLogger.logConnectionEvent(
-          sessionId,
-          'group-participants',
-          {
-            groupId: id,
-            action,
-            count: participants.length,
-            participants: participants.slice(0, 5), // Log only first 5 for brevity
-          },
-        );
-
-        // Update group metadata in cache
-        if (this.groupCache.has(id)) {
-          const metadata = this.groupCache.get(id) as GroupMetadata;
-          if (metadata && metadata.participants) {
-            if (action === 'add') {
-              for (const jid of participants) {
-                // Add new participants
-                metadata.participants.push({
-                  id: jid,
-                  isAdmin: false,
-                  isSuperAdmin: false,
-                });
-              }
-            } else if (action === 'remove') {
-              // Remove participants
-              metadata.participants = metadata.participants.filter(
-                (p) => !participants.includes(p.id),
-              );
-            } else if (action === 'promote' || action === 'demote') {
-              // Update admin status
-              for (const jid of participants) {
-                const participant = metadata.participants.find(
-                  (p) => p.id === jid,
-                );
-                if (participant) {
-                  participant.isAdmin = action === 'promote';
-                }
-              }
-            }
-            this.groupCache.set(id, metadata);
-          }
-        }
-
-        // Update database
-        void this.chatService.updateGroupParticipants(
-          sessionId,
-          id,
-          participants,
-          action,
-        );
-      });
-
-      // Handle contact updates
-      connection.socket.ev.on('contacts.update', (updates) => {
-        this.whatsappLogger.logConnectionEvent(sessionId, 'contacts-update', {
-          count: updates.length,
-        });
-
-        for (const update of updates) {
-          if (update.id) {
-            this.whatsappLogger.logConnectionEvent(
-              sessionId,
-              'contact-updated',
-              {
-                contactId: update.id,
-                updateFields: Object.keys(update).filter((k) => k !== 'id'),
-              },
-            );
-
-            // Update contact in database
-            void this.chatService.updateContact(sessionId, update);
-          }
-        }
-      });
-
-      // Handle new contacts
-      connection.socket.ev.on('contacts.upsert', (contacts) => {
-        this.whatsappLogger.logConnectionEvent(sessionId, 'contacts-upsert', {
-          count: contacts.length,
-        });
-
-        for (const contact of contacts) {
-          void this.chatService.storeContact(sessionId, contact);
-        }
-      });
-
-      // Handle chat updates more comprehensively
-      connection.socket.ev.on('chats.upsert', (newChats) => {
-        this.whatsappLogger.logConnectionEvent(sessionId, 'chats-upsert', {
-          count: newChats.length,
-        });
-
-        for (const chat of newChats) {
-          void this.chatService.storeChat(sessionId, chat);
-        }
-      });
-
-      // Handle message status updates (read, delivered)
-      connection.socket.ev.on('message-receipt.update', (updates) => {
-        for (const { key, receipt } of updates) {
-          if (key.remoteJid) {
-            // Determine receipt type based on available timestamps
-            let receiptType = 'unknown';
-            if ('readTimestamp' in receipt) receiptType = 'read';
-            else if ('deliveredTimestamp' in receipt) receiptType = 'delivered';
-            else if ('playedTimestamp' in receipt) receiptType = 'played';
-
-            this.whatsappLogger.logMessageEvent(
-              sessionId,
-              'receipt-update',
-              key.remoteJid,
-              {
-                messageId: key.id,
-                receiptType,
-                timestamp: new Date().toISOString(),
-              },
-            );
-
-            void this.messageService.updateMessageReceipt(
-              sessionId,
-              key.remoteJid,
-              key.id || '',
-              receipt,
-            );
-          }
-        }
-      });
+      //         void this.messageService.updateMessage(
+      //           sessionId,
+      //           update.key.remoteJid,
+      //           update.key.id,
+      //           update,
+      //         );
+      //       }
+      //     } catch (error) {
+      //       const err =
+      //         error instanceof Error ? error : new Error(String(error));
+      //       this.logger.error(
+      //         `Failed to process message update for ${update.key?.id || 'unknown'}:`,
+      //         err,
+      //       );
+      //     }
+      //   }
+      // });
     }
 
     this.connections.set(sessionId, connection);
@@ -803,5 +637,38 @@ export class ConnectionService {
         'ConnectionService',
       );
     }
+  }
+  private async appendToSessionLog(
+    sessionId: string,
+    logContent: string,
+  ): Promise<void> {
+    const logFilePath = path.join(
+      this.sessionLogsDir,
+      `${sessionId}_history_sync.txt`,
+    );
+    try {
+      await fs.promises.appendFile(
+        logFilePath,
+        `\n${new Date().toISOString()}\n${logContent}\n`,
+      );
+    } catch (error) {
+      this.whatsappLogger.logError(
+        sessionId,
+        error,
+        `Failed to write to session history log file: ${logFilePath}`,
+      );
+    }
+  }
+  private wrapAsyncHandler<T>(
+    handler: (data: T) => Promise<void>,
+  ): (data: T) => void {
+    return (data: T) => {
+      void handler(data).catch((error: unknown) => {
+        this.logger.error(
+          `Error in async event handler: ${error instanceof Error ? error.message : String(error)}`,
+          error instanceof Error ? error.stack : undefined,
+        );
+      });
+    };
   }
 }
