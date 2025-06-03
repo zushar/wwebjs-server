@@ -2,7 +2,7 @@ import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import {
   ChatDataEntity,
   MessageDataEntity,
-} from './interfaces/chat-data.interface';
+} from '../interfaces/chat-data.interface';
 
 @Entity('chat_data')
 export class ChatData implements ChatDataEntity {
@@ -51,4 +51,28 @@ export class MessageData implements MessageDataEntity {
 
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   timestamp!: Date;
+}
+@Entity('contact_data')
+export class ContactData {
+  @PrimaryColumn()
+  id!: string;
+
+  @Index()
+  @Column()
+  sessionId!: string;
+
+  @Column()
+  jid!: string;
+
+  @Column({ nullable: true })
+  name?: string;
+
+  @Column({ nullable: true })
+  pushName?: string;
+
+  @Column({ type: 'json', nullable: true })
+  metadata!: Record<string, any>;
+
+  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  updatedAt!: Date;
 }

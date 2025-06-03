@@ -2,11 +2,11 @@
 import { NestFactory } from '@nestjs/core';
 import { WinstonModule } from 'nest-winston';
 import { AppModule } from './app.module';
-import { createMaximalWinstonOptions } from './logging/logger.factory';
+import { createEnhancedWinstonOptions } from './logging/logger.factory';
 
 async function bootstrap() {
   // 1) build a single Winston‐in‐Nest logger
-  const logger = WinstonModule.createLogger(createMaximalWinstonOptions());
+  const logger = WinstonModule.createLogger(createEnhancedWinstonOptions());
 
   // 2) pass it into NestFactory so *all* Nest logs go through it
   const app = await NestFactory.create(AppModule, {

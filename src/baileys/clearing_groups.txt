@@ -1,0 +1,143 @@
+# How Clearing Chats Works in Baileys
+
+Clearing chats in your WhatsApp Client Management Server involves a specific set of operations using the Baileys library. Here's a detailed explanation of how it works:
+
+## Core Clearing Mechanism
+
+Baileys offers two primary methods for clearing chats:
+
+### Method 1: Using `chatModify` (Recommended)
+
+```typescript
+// Clear all messages from a specific group
+await sock.chatModify(
+  { clear: 'all' }, // 'all' clears all messages
+  'groupId@g.us',   // The group JID
+  []                // Empty array for additional options
+);
+```
+
+This is the most efficient approach and is what WhatsApp Web uses internally. It sends a single command to clear all messages at once.
+
+### Method 2: Message-by-Message Deletion
+
+```typescript
+// Fetch messages from a group
+const messages = await sock.fetchMessages('groupId@g.us', 100);
+
+// Delete each message individually
+for (const message of messages) {
+  await sock.sendMessage('groupId@g.us', {
+    delete: {
+      fromMe: true,
+      id: message.key.id,
+      participant: message.key.participant
+    }
+  });
+  
+  // Add delay to avoid rate limiting
+  await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
+}
+```
+
+This approach is slower but gives you more control over the deletion process.
+
+## Implementation for Your PRD Requirements
+
+For your requirements to clear messages from archived or specific groups, here's how to implement it:
+
+### For Clearing All Messages from Archived Groups:
+
+```typescript
+async function clearAllArchivedGroups(sessionId) {
+  const connection = getConnection(sessionId);
+  const sock = connection.socket;
+  
+  // Get all chats
+  const chats = await sock.fetchAllMessages();
+  
+  // Filter for archived groups
+  const archivedGroups = chats.filter(c => c.archive && c.id.endsWith('@g.us'));
+  
+  const results = [];
+  
+  // Clear each archived group
+  for (const group of archivedGroups) {
+    try {
+      await sock.chatModify({ clear: 'all' }, group.id, []);
+      results.push(group.id);
+      
+      // Add delay between operations
+      await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 3000));
+    } catch (error) {
+      console.error(`Failed to clear ${group.id}:`, error);
+    }
+  }
+  
+  return { deletedFromGroups: results };
+}
+```
+
+### For Clearing Specific Groups:
+
+```typescript
+async function clearSpecificGroups(sessionId, groupIds) {
+  const connection = getConnection(sessionId);
+  const sock = connection.socket;
+  
+  const results = [];
+  const invalidGroupIds = [];
+  
+  for (const groupId of groupIds) {
+    // Ensure correct format for group IDs
+    const formattedGroupId = groupId.endsWith('@g.us') 
+      ? groupId 
+      : `${groupId}@g.us`;
+    
+    try {
+      // Verify this is a valid group
+      const chat = await sock.getChatById(formattedGroupId);
+      
+      if (!chat || !chat.id.endsWith('@g.us')) {
+        invalidGroupIds.push(groupId);
+        continue;
+      }
+      
+      // Clear the chat
+      await sock.chatModify({ clear: 'all' }, formattedGroupId, []);
+      results.push(formattedGroupId);
+      
+      // Add delay between operations
+      await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 3000));
+    } catch (error) {
+      console.error(`Failed to clear ${groupId}:`, error);
+      invalidGroupIds.push(groupId);
+    }
+  }
+  
+  return { 
+    deletedFromGroups: results,
+    invalidGroupIds
+  };
+}
+```
+
+## Rate Limiting Considerations
+
+WhatsApp has strict rate limits on message deletion operations:
+
+1. **Bulk Deletion**: Don't clear too many groups in quick succession
+2. **Cooling Period**: Add random delays between operations (2-5 seconds)
+3. **Time Window**: Limit clearing to 5-10 groups per hour to avoid bans
+
+## Error Handling
+
+The main errors you might encounter:
+
+1. **403 Forbidden**: Rate limiting or permission issues
+2. **404 Not Found**: Invalid group ID or you're no longer in the group
+3. **410 Gone**: Message already deleted or too old to delete
+
+Proper error handling and retries with exponential backoff are essential for reliable operation.
+
+Your current socket configuration looks good for this functionality, especially with the caching and rate limiting settings you've included.

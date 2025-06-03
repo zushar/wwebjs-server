@@ -16,40 +16,84 @@ export class RequestLoggerMiddleware implements NestMiddleware {
   ) {}
 
   use(req: Request, res: Response, next: NextFunction): void {
-    // 1) Capture start time as a typed tuple
+    // Capture start time as a typed tuple
     const start: [number, number] = process.hrtime();
 
+    // Generate a unique request ID
+    const requestId = Math.random().toString(36).substring(2, 15);
+
+    // Add request ID to response headers for tracking
+    res.setHeader('X-Request-ID', requestId);
+
     res.on('finish', () => {
-      // 2) Typed destructuring of the tuple
+      // Calculate duration
       const [s, ns]: [number, number] = process.hrtime(start);
       const ms = (s * 1e3 + ns / 1e6).toFixed(3);
 
       const { method, originalUrl, ip } = req;
       const { statusCode } = res;
-      const msg = `${method} ${originalUrl} ${statusCode} — ${ms} ms (${ip})`;
 
-      // 3) Use only LoggerService methods (always‐present)
+      // Create a structured log object
+      const logData = {
+        requestId,
+        method,
+        url: originalUrl,
+        statusCode,
+        duration: `${ms} ms`,
+        ip,
+      };
+
+      // Log with appropriate level based on status code
       if (statusCode >= 500) {
-        this.logger.error(msg, 'HTTP');
+        this.logger.error(`Request failed: ${method} ${originalUrl}`, {
+          ...logData,
+          context: 'HTTP',
+        });
       } else if (statusCode >= 400) {
-        this.logger.warn(msg, 'HTTP');
+        this.logger.warn(`Request warning: ${method} ${originalUrl}`, {
+          ...logData,
+          context: 'HTTP',
+        });
       } else {
-        this.logger.log(msg, 'HTTP');
+        this.logger.log(`Request completed: ${method} ${originalUrl}`, {
+          ...logData,
+          context: 'HTTP',
+        });
       }
 
-      // 4) Cast to Record<string,unknown> before JSON.stringify
+      // Log request details at debug level
       const params = req.params as Record<string, unknown>;
       const query = req.query as Record<string, unknown>;
       const body = req.body as Record<string, unknown>;
 
       if (Object.keys(params).length) {
-        this.logger.debug?.(`→ params: ${JSON.stringify(params)}`, 'HTTP');
+        this.logger.debug?.(`Request params`, {
+          requestId,
+          params,
+          context: 'HTTP',
+        });
       }
+
       if (Object.keys(query).length) {
-        this.logger.debug?.(`→ query: ${JSON.stringify(query)}`, 'HTTP');
+        this.logger.debug?.(`Request query`, {
+          requestId,
+          query,
+          context: 'HTTP',
+        });
       }
+
       if (body && typeof body === 'object' && Object.keys(body).length) {
-        this.logger.debug?.(`→ body: ${JSON.stringify(body)}`, 'HTTP');
+        // Sanitize sensitive data if needed
+        const sanitizedBody = { ...body } as Record<string, unknown>;
+        if ('password' in sanitizedBody) {
+          sanitizedBody.password = '********';
+        }
+
+        this.logger.debug?.(`Request body`, {
+          requestId,
+          body: sanitizedBody,
+          context: 'HTTP',
+        });
       }
     });
 

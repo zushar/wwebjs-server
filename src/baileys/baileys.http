@@ -6,7 +6,7 @@
 # Then select the environment using the REST Client plugin's environment selector
 # (by default in the bottom right of VS Code when viewing a .http file)
 
-@sessionId = user1
+@sessionId = user2
 @timestamp = {{timestamp}}
 ### ====== CONNECTION MANAGEMENT ======
 
@@ -145,8 +145,6 @@ Content-Type: application/json
   "phoneNumber": "+972501234567"
 }
 
-### get all groups
-GET {{baseUrl}}/whatsapp/sessions/{{sessionId}}/chats
 ### TROUBLESHOOTING TIPS:
 # 1. If connection shows "pairing" but doesn't connect after entering code:
 #    - Try closing and recreating the session
