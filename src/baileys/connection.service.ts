@@ -438,107 +438,107 @@ export class ConnectionService {
       );
 
       // Handle incoming message updates
-      // connection.socket.ev.on('messages.upsert', ({ messages, type }) => {
-      //   if (type === 'notify') {
-      //     // These are new messages that should be stored
-      //     for (const message of messages) {
-      //       try {
-      //         // Check for valid message data
-      //         if (message.key?.id && message.key.remoteJid) {
-      //           // Log incoming message (optional)
-      //           this.logger.debug?.(
-      //             `Received message from ${message.key.fromMe ? 'self' : 'others'}: ${message.key.id}`,
-      //             { sessionId, chatJid: message.key.remoteJid },
-      //           );
+      connection.socket.ev.on('messages.upsert', ({ messages, type }) => {
+        if (type === 'notify') {
+          // These are new messages that should be stored
+          for (const message of messages) {
+            try {
+              // Check for valid message data
+              if (message.key?.id && message.key.remoteJid) {
+                // Log incoming message (optional)
+                this.logger.debug?.(
+                  `Received message from ${message.key.fromMe ? 'self' : 'others'}: ${message.key.id}`,
+                  { sessionId, chatJid: message.key.remoteJid },
+                );
 
-      //           // Store in database
-      //           void this.messageService.storeMessage(sessionId, message);
-      //         }
-      //       } catch (error) {
-      //         const err =
-      //           error instanceof Error ? error : new Error(String(error));
-      //         this.logger.error(
-      //           `Failed to process incoming message ${message.key?.id || 'unknown'}:`,
-      //           err,
-      //         );
-      //       }
-      //     }
-      //   }
-      // });
+                // Store in database
+                void this.messageService.storeMessage(sessionId, message);
+              }
+            } catch (error) {
+              const err =
+                error instanceof Error ? error : new Error(String(error));
+              this.logger.error(
+                `Failed to process incoming message ${message.key?.id || 'unknown'}:`,
+                err,
+              );
+            }
+          }
+        }
+      });
 
       // Handle message deletions
-      // connection.socket.ev.on('messages.delete', (data) => {
-      //   try {
-      //     if ('all' in data && data.jid) {
-      //       // All messages in a chat were deleted
-      //       this.logger.log(
-      //         `All messages deleted in chat ${data.jid}`,
-      //         'MessageService',
-      //       );
-      //       void this.messageService.deleteAllMessagesInChat(
-      //         sessionId,
-      //         data.jid,
-      //       );
-      //     } else if (
-      //       'keys' in data &&
-      //       Array.isArray(data.keys) &&
-      //       data.keys.length > 0
-      //     ) {
-      //       // Specific messages were deleted
-      //       this.logger.log(
-      //         `Specific messages deleted ${data.keys[0]?.remoteJid ? `in chat ${data.keys[0].remoteJid}` : '(unknown chat)'}`,
-      //         'MessageService',
-      //       );
+      connection.socket.ev.on('messages.delete', (data) => {
+        try {
+          if ('all' in data && data.jid) {
+            // All messages in a chat were deleted
+            this.logger.log(
+              `All messages deleted in chat ${data.jid}`,
+              'MessageService',
+            );
+            void this.messageService.deleteAllMessagesInChat(
+              sessionId,
+              data.jid,
+            );
+          } else if (
+            'keys' in data &&
+            Array.isArray(data.keys) &&
+            data.keys.length > 0
+          ) {
+            // Specific messages were deleted
+            this.logger.log(
+              `Specific messages deleted ${data.keys[0]?.remoteJid ? `in chat ${data.keys[0].remoteJid}` : '(unknown chat)'}`,
+              'MessageService',
+            );
 
-      //       for (const key of data.keys) {
-      //         if (key.remoteJid && key.id) {
-      //           void this.messageService.deleteMessage(
-      //             sessionId,
-      //             key.remoteJid,
-      //             key.id,
-      //             key.fromMe === null ? undefined : key.fromMe,
-      //           );
-      //         }
-      //       }
-      //     }
-      //   } catch (error) {
-      //     const err = error instanceof Error ? error : new Error(String(error));
-      //     this.logger.error('Failed to process message deletion event:', err);
-      //   }
-      // });
+            for (const key of data.keys) {
+              if (key.remoteJid && key.id) {
+                void this.messageService.deleteMessage(
+                  sessionId,
+                  key.remoteJid,
+                  key.id,
+                  key.fromMe === null ? undefined : key.fromMe,
+                );
+              }
+            }
+          }
+        } catch (error) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          this.logger.error('Failed to process message deletion event:', err);
+        }
+      });
 
       // Handle message updates (reactions, edits, etc.)
-      // connection.socket.ev.on('messages.update', (updates) => {
-      //   for (const update of updates) {
-      //     try {
-      //       if (
-      //         update.key &&
-      //         update.key.remoteJid &&
-      //         update.key.id &&
-      //         update.update
-      //       ) {
-      //         this.logger.debug?.(
-      //           `Message update for ${update.key.id}: ${Object.keys(update.update).join(', ')}`,
-      //           { sessionId, chatJid: update.key.remoteJid },
-      //         );
+      connection.socket.ev.on('messages.update', (updates) => {
+        for (const update of updates) {
+          try {
+            if (
+              update.key &&
+              update.key.remoteJid &&
+              update.key.id &&
+              update.update
+            ) {
+              this.logger.debug?.(
+                `Message update for ${update.key.id}: ${Object.keys(update.update).join(', ')}`,
+                { sessionId, chatJid: update.key.remoteJid },
+              );
 
-      //         void this.messageService.updateMessage(
-      //           sessionId,
-      //           update.key.remoteJid,
-      //           update.key.id,
-      //           update,
-      //         );
-      //       }
-      //     } catch (error) {
-      //       const err =
-      //         error instanceof Error ? error : new Error(String(error));
-      //       this.logger.error(
-      //         `Failed to process message update for ${update.key?.id || 'unknown'}:`,
-      //         err,
-      //       );
-      //     }
-      //   }
-      // });
+              void this.messageService.updateMessage(
+                sessionId,
+                update.key.remoteJid,
+                update.key.id,
+                update,
+              );
+            }
+          } catch (error) {
+            const err =
+              error instanceof Error ? error : new Error(String(error));
+            this.logger.error(
+              `Failed to process message update for ${update.key?.id || 'unknown'}:`,
+              err,
+            );
+          }
+        }
+      });
     }
 
     this.connections.set(sessionId, connection);

@@ -1,10 +1,9 @@
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Chat, proto } from '@whiskeysockets/baileys';
+import { Chat } from '@whiskeysockets/baileys';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { Repository } from 'typeorm';
 import { GroupEntity } from './entityes/group.entity';
-import { MessageEntity } from './entityes/message.entity';
 
 @Injectable()
 export class GroupService {
@@ -13,59 +12,7 @@ export class GroupService {
     private readonly logger: LoggerService,
     @InjectRepository(GroupEntity)
     private chatEntityRepository: Repository<GroupEntity>,
-    @InjectRepository(MessageEntity)
-    private messageEntityRepository: Repository<MessageEntity>,
   ) {}
-
-  /**
-   * Store a chat message directly in the database
-   */
-  async storeChatMessage(
-    sessionId: string,
-    message: proto.IWebMessageInfo,
-  ): Promise<void> {
-    try {
-      const chatId = message.key?.remoteJid;
-      if (!chatId) {
-        this.logger.warn('Cannot store message: missing remoteJid');
-        return;
-      }
-
-      // Make sure the chat exists
-      await this.ensureChatExists(sessionId, chatId);
-
-      // Create message entity
-      const messageEntity = new MessageEntity();
-      messageEntity.sessionId = sessionId;
-      messageEntity.chatId = chatId;
-      messageEntity.id = message.key.id || `local-${Date.now()}`;
-      messageEntity.fromMe = message.key.fromMe || false;
-      messageEntity.sender = message.key.participant || chatId;
-
-      // Extract text if available
-      if (message.message) {
-        if (message.message.conversation) {
-          messageEntity.text = message.message.conversation;
-        } else if (message.message.extendedTextMessage?.text) {
-          messageEntity.text = message.message.extendedTextMessage.text;
-        }
-      }
-
-      messageEntity.timestamp = message.messageTimestamp
-        ? Number(message.messageTimestamp)
-        : Date.now() / 1000;
-
-      messageEntity.rawData = message;
-
-      await this.messageEntityRepository.save(messageEntity);
-
-      // Update the last message info in the chat
-      await this.updateChatLastMessage(sessionId, chatId, messageEntity);
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.logger.error(`Failed to store chat message:`, err);
-    }
-  }
 
   /**
    * Make sure a chat exists in the database
@@ -89,25 +36,6 @@ export class GroupService {
     }
 
     return chat;
-  }
-
-  /**
-   * Update the last message information for a chat
-   */
-  private async updateChatLastMessage(
-    sessionId: string,
-    chatId: string,
-    message: MessageEntity,
-  ): Promise<void> {
-    await this.chatEntityRepository.update(
-      { sessionId, id: chatId },
-      {
-        lastMessageId: message.id,
-        lastMessageText: message.text || '(media message)',
-        lastMessageTimestamp: message.timestamp,
-        conversationTimestamp: message.timestamp,
-      },
-    );
   }
 
   /**
