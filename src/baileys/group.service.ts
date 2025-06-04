@@ -88,12 +88,10 @@ export class GroupService {
   /**
    * Get all chats for a session with optional filtering
    */
-  async getChats(
+  async getGroups(
     sessionId: string,
     options?: {
       archived?: boolean;
-      limit?: number;
-      offset?: number;
     },
   ): Promise<[GroupEntity[], number]> {
     const query = this.chatEntityRepository
@@ -110,14 +108,6 @@ export class GroupService {
     query
       .orderBy('chat.pinned', 'ASC', 'NULLS LAST')
       .addOrderBy('chat.conversationTimestamp', 'DESC');
-
-    if (options?.limit) {
-      query.take(options.limit);
-    }
-
-    if (options?.offset) {
-      query.skip(options.offset);
-    }
 
     return query.getManyAndCount();
   }

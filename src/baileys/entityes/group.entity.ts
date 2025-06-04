@@ -112,19 +112,21 @@ export class GroupEntity {
     // Handle name (could be null, which we convert to undefined)
     this.name = chat.name || undefined;
 
+    // Fix conversationTimestamp handling
     this.conversationTimestamp =
       typeof chat.conversationTimestamp === 'number'
         ? chat.conversationTimestamp
-        : typeof chat.conversationTimestamp === 'object' &&
-            chat.conversationTimestamp
-          ? Number(chat.conversationTimestamp.low || 0)
-          : undefined;
+        : typeof chat.conversationTimestamp === 'string'
+          ? parseInt(chat.conversationTimestamp)
+          : typeof chat.conversationTimestamp === 'object' &&
+              chat.conversationTimestamp
+            ? Number(chat.conversationTimestamp.low || 0)
+            : undefined;
 
     this.unreadCount = chat.unreadCount || 0;
-    this.archived = chat.archived || false; // Changed from archive to archived
+    this.archived = chat.archived || false;
     this.readOnly = chat.readOnly || false;
 
-    // These properties may not exist in the Chat type, so handle them safely
     this.muteEndTime = undefined; // Update with actual data if available
     this.pinned = undefined; // Update with actual data if available
 
@@ -175,12 +177,20 @@ export class GroupEntity {
                 : '(media message)';
           }
 
+          // Fix timestamp handling
           this.lastMessageTimestamp =
             typeof lastMsg.messageTimestamp === 'string'
-              ? Number(lastMsg.messageTimestamp)
+              ? parseInt(lastMsg.messageTimestamp)
               : typeof lastMsg.messageTimestamp === 'number'
                 ? lastMsg.messageTimestamp
-                : undefined;
+                : typeof lastMsg.messageTimestamp === 'object' &&
+                    lastMsg.messageTimestamp
+                  ? Number(
+                      lastMsg.messageTimestamp.low ||
+                        lastMsg.messageTimestamp.high ||
+                        0,
+                    )
+                  : undefined;
         }
       }
     }

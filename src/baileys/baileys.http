@@ -7,7 +7,7 @@
 # (by default in the bottom right of VS Code when viewing a .http file)
 
 @sessionId = user2
-@clientId = your-client-id-here
+@clientId = user2
 @timestamp = {{$timestamp}}
 
 ### ====== CONNECTION MANAGEMENT ======
@@ -34,53 +34,63 @@ GET {{baseUrl}}/whatsapp/sessions/{{sessionId}}/status
 # Useful to see all currently active WhatsApp connections
 GET {{baseUrl}}/whatsapp/sessions
 
-### 6. Close a connection
+### 5. Close a connection
 # Use this to properly log out and close a WhatsApp connection
 DELETE {{baseUrl}}/whatsapp/sessions/{{sessionId}}
 
+### ====== GROUP MANAGEMENT (CLIENT-BASED) ======
 
-### 8. Get all groups for a client
+### 6. Get all groups for a client
 # Retrieve all WhatsApp groups the connected account is part of
 GET {{baseUrl}}/whatsapp/groups?clientId={{clientId}}
 
-### 9. Get all archived groups for a client
+### 7. Get all archived groups for a client
 # Retrieve all archived WhatsApp groups for the connected account
 GET {{baseUrl}}/whatsapp/groups/archived?clientId={{clientId}}
 
-### 10. Delete all messages from all archived groups
+### ====== GROUP MANAGEMENT (SESSION-BASED) ======
+
+### 8. Get all groups for a session
+# Retrieve all WhatsApp groups for a specific session
+GET {{baseUrl}}/whatsapp/sessions/{{sessionId}}/groups
+
+### 9. Get all archived groups for a session
+# Retrieve all archived WhatsApp groups for a specific session
+GET {{baseUrl}}/whatsapp/sessions/{{sessionId}}/groups/archived
+
+### 10. Get specific group by ID
+# Retrieve details of a specific group by its ID
+@groupId = 120363123456789012@g.us
+GET {{baseUrl}}/whatsapp/sessions/{{sessionId}}/groups/{{groupId}}
+
+### ====== GROUP OPERATIONS (PRD ENDPOINTS) ======
+
+### 11. Delete all messages from all archived groups
 # Delete all messages from every archived group
 DELETE {{baseUrl}}/whatsapp/delete/archive/all?clientId={{clientId}}
 
-### 11. Delete messages from specific groups
-# Delete all messages from specified group IDs
+### Delete messages from specific groups
 DELETE {{baseUrl}}/whatsapp/delete/group
 Content-Type: application/json
 
 {
   "clientId": "{{clientId}}",
-  "groupIds": [
-    "120363123456789012@g.us",
-    "120363987654321098@g.us"
-  ]
+  "groupIds": ["120363420498627074@g.us","120363400771049095@g.us","120363400114178058@g.us","120363416493967616@g.us","120363417034692892@g.us","120363418900048815@g.us","120363403845617143@g.us","120363418941236327@g.us","120363417707754775@g.us","120363399307013398@g.us","120363399445195209@g.us","120363420793440399@g.us","120363401171145083@g.us","120363418682461875@g.us","120363414579841081@g.us"]
 }
 
-### 12. Send message to specific groups
+### 13. Send message to specific groups
 # Send a message to multiple groups at once
-POST {{baseUrl}}/whatsapp/send/group
+POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/groups/messages
 Content-Type: application/json
 
 {
-  "clientId": "{{clientId}}",
-  "groupIds": [
-    "120363123456789012@g.us",
-    "120363987654321098@g.us"
-  ],
-  "message": "Hello everyone! This is a group message sent at {{$datetime iso8601}}"
+  "groupIds": ["120363420498627074@g.us","120363400771049095@g.us","120363400114178058@g.us","120363416493967616@g.us","120363417034692892@g.us","120363418900048815@g.us","120363403845617143@g.us","120363418941236327@g.us","120363417707754775@g.us","120363399307013398@g.us","120363399445195209@g.us","120363420793440399@g.us","120363401171145083@g.us","120363418682461875@g.us","120363414579841081@g.us"],
+  "message": "Hello everyone! This is a test message sent at {{$datetime iso8601}}"
 }
 
 ### ====== MESSAGING ======
 
-### 13. Send a text message
+### 14. Send a text message
 # Basic text message - simplest form of message
 POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/messages
 Content-Type: application/json
@@ -91,7 +101,7 @@ Content-Type: application/json
   "type": "text"
 }
 
-### 14. Send a text message to yourself
+### 15. Send a text message to yourself
 # Send a message to the same number used for the connection
 POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/messages
 Content-Type: application/json
@@ -102,7 +112,7 @@ Content-Type: application/json
   "type": "text"
 }
 
-### 15. Send an image message
+### 16. Send an image message
 # Image message with caption
 POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/messages
 Content-Type: application/json
@@ -116,7 +126,7 @@ Content-Type: application/json
   "type": "image"
 }
 
-### 16. Send a document message
+### 17. Send a document message
 # PDF document with custom filename
 POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/messages
 Content-Type: application/json
@@ -131,7 +141,7 @@ Content-Type: application/json
   "type": "document"
 }
 
-### 17. Send a location message
+### 18. Send a location message
 # Coordinates with a location name
 POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/messages
 Content-Type: application/json
@@ -148,7 +158,7 @@ Content-Type: application/json
 
 ### ====== BULK MESSAGING ======
 
-### 18. Send bulk text messages
+### 19. Send bulk text messages
 # Send the same message to multiple recipients
 POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/bulk-messages
 Content-Type: application/json
@@ -159,7 +169,7 @@ Content-Type: application/json
   "type": "text"
 }
 
-### 19. Send bulk image messages
+### 20. Send bulk image messages
 POST {{baseUrl}}/whatsapp/sessions/{{sessionId}}/bulk-messages
 Content-Type: application/json
 
@@ -174,7 +184,7 @@ Content-Type: application/json
 
 ### ====== SESSION MANAGEMENT ======
 
-### 20. Create a new WhatsApp connection with custom session name
+### 21. Create a new WhatsApp connection with custom session name
 # Create a different session for another phone number or account
 @customSession = business_account
 POST {{baseUrl}}/whatsapp/sessions/{{customSession}}
@@ -183,6 +193,43 @@ Content-Type: application/json
 {
   "phoneNumber": "+972501234567"
 }
+
+### ====== TESTING WORKFLOW FOR NEW ENDPOINTS ======
+
+### Step 1: Connect and establish session
+# Use the session-based connection first
+POST {{baseUrl}}/whatsapp/sessions/test_session
+Content-Type: application/json
+
+{
+  "phoneNumber": "{{phoneNumber}}"
+}
+
+### Step 2: Get pairing code and connect
+GET {{baseUrl}}/whatsapp/sessions/test_session/pairing-code
+
+### Step 3: Check connection status
+GET {{baseUrl}}/whatsapp/sessions/test_session/status
+
+### Step 4: Test session-based group retrieval
+# Get all groups for the session
+GET {{baseUrl}}/whatsapp/sessions/test_session/groups
+
+### Step 5: Test archived groups for session
+# Check if there are any archived groups for the session
+GET {{baseUrl}}/whatsapp/sessions/test_session/groups/archived
+
+### Step 6: Test specific group retrieval
+# Get details of a specific group (replace with actual group ID)
+GET {{baseUrl}}/whatsapp/sessions/test_session/groups/120363123456789012@g.us
+
+### Step 7: Test client-based group retrieval
+# Get all groups using clientId (use sessionId as clientId for testing)
+GET {{baseUrl}}/whatsapp/groups?clientId=test_session
+
+### Step 8: Test client-based archived groups
+# Get archived groups using clientId
+GET {{baseUrl}}/whatsapp/groups/archived?clientId=test_session
 
 ### ====== TESTING WORKFLOW FOR PRD ENDPOINTS ======
 
@@ -219,6 +266,24 @@ Content-Type: application/json
   "groupIds": ["test-group-id@g.us"]
 }
 
+### ====== ENDPOINT COMPARISON TESTING ======
+
+### Compare session-based vs client-based group retrieval
+# Session-based (using sessionId in URL path)
+GET {{baseUrl}}/whatsapp/sessions/{{sessionId}}/groups
+
+###
+# Client-based (using clientId as query parameter)
+GET {{baseUrl}}/whatsapp/groups?clientId={{sessionId}}
+
+### Compare archived group retrieval methods
+# Session-based archived groups
+GET {{baseUrl}}/whatsapp/sessions/{{sessionId}}/groups/archived
+
+###
+# Client-based archived groups
+GET {{baseUrl}}/whatsapp/groups/archived?clientId={{sessionId}}
+
 ### TROUBLESHOOTING TIPS:
 # 1. If connection shows "pairing" but doesn't connect after entering code:
 #    - Try closing and recreating the session
@@ -233,22 +298,43 @@ Content-Type: application/json
 #    - Verify the connection status is "connected"
 #    - Check that the recipient number is correctly formatted
 #
-# 4. For PRD endpoints:
+# 4. For group endpoints:
+#    - Session-based endpoints use sessionId in the URL path
+#    - Client-based endpoints use clientId as a query parameter
+#    - Both should return the same data if sessionId = clientId
+#
+# 5. For PRD endpoints:
 #    - Make sure to use the correct clientId from the connection response
 #    - Group IDs should be in the format: "123456789@g.us"
 #    - Be careful with delete operations - they cannot be undone
 #
-# 5. Group ID format:
+# 6. Group ID format:
 #    - Individual chats: "1234567890@s.whatsapp.net"
 #    - Group chats: "1234567890-1234567890@g.us"
 
-### IMPORTANT NOTES FOR PRD ENDPOINTS:
-# - The clientId is returned when you create a connection
-# - Group IDs can be obtained from the /groups endpoint
-# - Message deletion is permanent and cannot be undone
+### IMPORTANT NOTES FOR NEW ENDPOINTS:
+# - Session-based endpoints provide more granular control per session
+# - Client-based endpoints are useful for multi-session management
+# - The specific group endpoint allows detailed inspection of group metadata
 # - Always test with non-important groups first
 # - Some operations may take time for large groups
+# - Group IDs can be obtained from the /groups endpoints
+
+### ENDPOINT SUMMARY:
+# Session-based Group Management:
+# - GET /whatsapp/sessions/{sessionId}/groups
+# - GET /whatsapp/sessions/{sessionId}/groups/archived  
+# - GET /whatsapp/sessions/{sessionId}/groups/{groupId}
+#
+# Client-based Group Management:
+# - GET /whatsapp/groups?clientId={clientId}
+# - GET /whatsapp/groups/archived?clientId={clientId}
+#
+# PRD Operations (existing):
+# - DELETE /whatsapp/delete/archive/all?clientId={clientId}
+# - DELETE /whatsapp/delete/group
+# - POST /whatsapp/send/group
 
 ### Session created on: 2025-05-30 11:34:02
 ### Current User: zushar
-### Updated: {{$datetime 'YYYY-MM-DD HH:mm:ss'}} with PRD endpoints
+### Updated: {{$datetime 'YYYY-MM-DD HH:mm:ss'}} with new controller endpoints
