@@ -351,40 +351,6 @@ export class BaileysController {
       throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
-  @Delete('sessions/:sessionId/groups/:groupId/messages')
-  async clearGroupChat(
-    @Param('sessionId') sessionId: string,
-    @Param('groupId') groupId: string,
-  ) {
-    try {
-      if (!groupId.endsWith('@g.us')) {
-        throw new HttpException(
-          'Invalid group ID format. Must end with @g.us',
-          HttpStatus.BAD_REQUEST,
-        );
-      }
-
-      await this.baileysService.clearGroupChat(sessionId, groupId);
-
-      return {
-        success: true,
-        sessionId,
-        groupId,
-        message: `Successfully cleared messages in group ${groupId}`,
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error: unknown) {
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      const errorMessage =
-        error instanceof Error ? error.message : 'Failed to clear group chat';
-      this.logger.error(
-        `Error clearing group chat ${groupId} for session ${sessionId}: ${errorMessage}`,
-      );
-      throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-  }
 
   @Delete('delete/archive/all')
   async deleteAllArchivedGroupMessages(@Query('clientId') clientId?: string) {
@@ -396,37 +362,12 @@ export class BaileysController {
         );
       }
 
-      // Get all archived groups
-      const [archivedGroups] = await this.groupService.getGroups(clientId, {
-        archived: true,
-      });
-
-      if (archivedGroups.length === 0) {
-        return {
-          success: true,
-          clientId,
-          message: 'No archived groups found to clear',
-          clearedCount: 0,
-          timestamp: new Date().toISOString(),
-        };
-      }
-
-      const results = await this.baileysService.clearMultipleGroupChats(
-        clientId,
-        archivedGroups.map((group) => group.id),
-      );
-
-      const successCount = results.results.filter((r) => r.success).length;
-      const failureCount = results.results.filter((r) => !r.success).length;
+      const results =
+        await this.baileysService.clearMultipleGroupChats(clientId);
 
       return {
-        success: results.success,
+        success: results,
         clientId,
-        totalGroups: archivedGroups.length,
-        successCount,
-        failureCount,
-        results: results.results,
-        message: `Cleared messages from ${successCount}/${archivedGroups.length} archived groups`,
         timestamp: new Date().toISOString(),
       };
     } catch (error: unknown) {
@@ -449,7 +390,9 @@ export class BaileysController {
     @Body() deleteGroupMessagesDto: DeleteGroupMessagesDto,
   ) {
     try {
-      if (!deleteGroupMessagesDto.clientId) {
+      const clientId = deleteGroupMessagesDto.clientId;
+      const groupIds = deleteGroupMessagesDto.groupIds;
+      if (!clientId) {
         throw new HttpException('clientId is required', HttpStatus.BAD_REQUEST);
       }
 
@@ -463,35 +406,14 @@ export class BaileysController {
         );
       }
 
-      // Validate group IDs format
-      const invalidGroupIds = deleteGroupMessagesDto.groupIds.filter(
-        (groupId) => !groupId.endsWith('@g.us'),
-      );
-
-      if (invalidGroupIds.length > 0) {
-        throw new HttpException(
-          `Invalid group ID format: ${invalidGroupIds.join(', ')}. Group IDs must end with '@g.us'`,
-          HttpStatus.BAD_REQUEST,
-        );
-      }
-
       const results = await this.baileysService.clearMultipleGroupChats(
-        deleteGroupMessagesDto.clientId,
-        deleteGroupMessagesDto.groupIds,
+        clientId,
+        groupIds,
       );
-
-      const successCount = results.results.filter((r) => r.success).length;
-      const failureCount = results.results.filter((r) => !r.success).length;
 
       return {
-        success: results.success,
-        clientId: deleteGroupMessagesDto.clientId,
-        totalGroups: deleteGroupMessagesDto.groupIds.length,
-        successCount,
-        failureCount,
-        groupIds: deleteGroupMessagesDto.groupIds,
-        results: results.results,
-        message: `Cleared messages from ${successCount}/${deleteGroupMessagesDto.groupIds.length} groups`,
+        success: results,
+        clientId,
         timestamp: new Date().toISOString(),
       };
     } catch (error: unknown) {
@@ -501,9 +423,9 @@ export class BaileysController {
       const errorMessage =
         error instanceof Error
           ? error.message
-          : 'Failed to delete group messages';
+          : 'Failed to delete archived group messages';
       this.logger.error(
-        `Error deleting group messages for client ${deleteGroupMessagesDto?.clientId}: ${errorMessage}`,
+        `Error deleting archived group messages for client ${deleteGroupMessagesDto.clientId}: ${errorMessage}`,
       );
       throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
     }

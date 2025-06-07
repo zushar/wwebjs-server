@@ -20,7 +20,6 @@ import { LoggerUtil } from 'src/utils/logget.util';
 import { Logger as WinstonLogger } from 'winston';
 import { WhatsAppLoggerService } from '../logging/whatsapp-logger.service';
 import { GroupService } from './group.service';
-import { InMemoryChatData } from './interfaces/chat-data.interface';
 import { MessageService } from './message.service';
 
 @Injectable()
@@ -29,7 +28,6 @@ export class ConnectionService {
   private readonly sessionsDir: string;
   private readonly maxReconnectAttempts = 5;
   private readonly reconnectInterval = 5000;
-  private chatStore = new Map<string, Map<string, InMemoryChatData>>();
   private groupCache = new NodeCache({
     stdTTL: 3600,
     maxKeys: 1000,
@@ -43,11 +41,11 @@ export class ConnectionService {
     private readonly logger: LoggerService,
     @Inject(WINSTON_MODULE_PROVIDER)
     private readonly rawWinston: WinstonLogger,
-    private readonly whatsappLogger: WhatsAppLoggerService,
+    public readonly whatsappLogger: WhatsAppLoggerService,
     @Inject(forwardRef(() => GroupService))
-    private readonly groupService: GroupService,
+    public readonly groupService: GroupService,
     @Inject(forwardRef(() => MessageService))
-    private readonly messageService: MessageService,
+    public readonly messageService: MessageService,
   ) {
     const cwd = process.cwd();
     if (!cwd) {
@@ -96,11 +94,6 @@ export class ConnectionService {
       phoneNumber: formattedNumber,
       user,
     });
-
-    // Initialize chat store for this session
-    if (!this.chatStore.has(sessionId)) {
-      this.chatStore.set(sessionId, new Map<string, InMemoryChatData>());
-    }
 
     if (isNewSession) {
       fs.mkdirSync(sessionDir, { recursive: true });
@@ -366,25 +359,62 @@ export class ConnectionService {
       // Handle messaging-history.set
       connection.socket.ev.on(
         'messaging-history.set',
-        this.wrapAsyncHandler(async ({ chats: newChats }) => {
-          // Process new chats - filter for groups only
-          if (Array.isArray(newChats)) {
-            const groupChats = newChats.filter((chat) =>
-              chat.id.endsWith('@g.us'),
+        this.wrapAsyncHandler(
+          async ({
+            chats: newChats,
+            messages: newMessages,
+            syncType: syncType,
+            progress: progress,
+            isLatest: isLatest,
+          }) => {
+            console.log(
+              `messaging-history.set event received syncType: ${syncType} progress: ${progress} isLatest: ${isLatest}`,
             );
-
-            for (const chat of groupChats) {
+            // Process new chats - filter for groups only
+            if (Array.isArray(newChats)) {
+              const groupChats = newChats.filter((chat) =>
+                chat.id.endsWith('@g.us'),
+              );
+              // console.log('this is a group');
+              // console.dir(groupChats[0], { depth: null, colors: true });
+              for (const chat of groupChats) {
+                if (
+                  chat.id === '120363400114178058@g.us' ||
+                  chat.id === '120363400771049095@g.us' ||
+                  chat.id === '120363420498627074@g.us'
+                ) {
+                  console.log('this is a group chat');
+                  console.dir(chat, { depth: null, colors: true });
+                }
+                try {
+                  await this.groupService.storeEnhancedGroup(sessionId, chat);
+                } catch (error) {
+                  this.logger.error(
+                    `Failed to store group chat ${chat.id}:`,
+                    error,
+                  );
+                }
+              }
+            }
+            // Filter out non-group messages
+            const groupMessages = newMessages.filter((message) =>
+              message.key.remoteJid?.endsWith('@g.us'),
+            );
+            console.log('this is a group message');
+            console.dir(groupMessages[0], { depth: null, colors: true });
+            // Process group messages
+            for (const message of groupMessages) {
               try {
-                await this.groupService.storeEnhancedGroup(sessionId, chat);
+                await this.messageService.storeMessage(sessionId, message);
               } catch (error) {
                 this.logger.error(
-                  `Failed to store group chat ${chat.id}:`,
+                  `Failed to store group message ${message.key.id}:`,
                   error,
                 );
               }
             }
-          }
-        }),
+          },
+        ),
       );
 
       // Handle chat upserts - filter for groups only
@@ -635,27 +665,6 @@ export class ConnectionService {
       this.logger.error(
         `Failed to restore sessions: ${error instanceof Error ? error.message : String(error)}`,
         'ConnectionService',
-      );
-    }
-  }
-  private async appendToSessionLog(
-    sessionId: string,
-    logContent: string,
-  ): Promise<void> {
-    const logFilePath = path.join(
-      this.sessionLogsDir,
-      `${sessionId}_history_sync.txt`,
-    );
-    try {
-      await fs.promises.appendFile(
-        logFilePath,
-        `\n${new Date().toISOString()}\n${logContent}\n`,
-      );
-    } catch (error) {
-      this.whatsappLogger.logError(
-        sessionId,
-        error,
-        `Failed to write to session history log file: ${logFilePath}`,
       );
     }
   }

@@ -404,16 +404,6 @@ export class MessageService {
         return;
       }
 
-      // Handle different types of updates
-      if (update.reactions && Array.isArray(update.reactions)) {
-        // Type-safe access to reactions
-        const typedReactions = update.reactions;
-        message.reactions = typedReactions.map((reaction) => ({
-          sender: reaction.key?.participant || reaction.key?.remoteJid || '',
-          emoji: reaction.text || '👍',
-        }));
-      }
-
       if (update.edit) {
         // Handle edited message by storing both versions
         const originalText = message.text;
@@ -446,11 +436,6 @@ export class MessageService {
       // If the message is marked as deleted
       if (update.delete) {
         message.isDeleted = true;
-      }
-
-      // Handle standard Baileys message updates
-      if (update.status) {
-        message.status = update.status;
       }
 
       // Save updated message
@@ -492,15 +477,6 @@ export class MessageService {
           'MessageService',
         );
         return;
-      }
-
-      // Update the status based on receipt type
-      if (receipt.readTimestamp) {
-        message.status = 'read';
-      } else if (receipt.deliveredTimestamp) {
-        message.status = 'delivered';
-      } else if (receipt.playedTimestamp) {
-        message.status = 'played';
       }
 
       // Store the full receipt data in rawData for reference

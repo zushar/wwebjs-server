@@ -1,4 +1,4 @@
-import { proto } from '@whiskeysockets/baileys';
+import { proto, WAMessage } from '@whiskeysockets/baileys';
 import {
   Column,
   CreateDateColumn,
@@ -11,7 +11,67 @@ import {
 import { GroupEntity } from './group.entity';
 
 @Entity('messages')
-export class MessageEntity {
+export class MessageEntity implements Required<WAMessage> {
+  key: proto.IMessageKey;
+  message: proto.IMessage | null;
+  messageTimestamp: number | import('long') | null;
+  participant: string | null;
+  messageC2STimestamp: number | import('long') | null;
+  ignore: boolean | null;
+  starred: boolean | null;
+  broadcast: boolean | null;
+  pushName: string | null;
+  mediaCiphertextSha256: Uint8Array<ArrayBufferLike> | null;
+  multicast: boolean | null;
+  urlText: boolean | null;
+  urlNumber: boolean | null;
+  messageStubType: proto.WebMessageInfo.StubType | null;
+  clearMedia: boolean | null;
+  messageStubParameters: string[] | null;
+  duration: number | null;
+  labels: string[] | null;
+  paymentInfo: proto.IPaymentInfo | null;
+  finalLiveLocation: proto.Message.ILiveLocationMessage | null;
+  quotedPaymentInfo: proto.IPaymentInfo | null;
+  ephemeralStartTimestamp: number | import('long') | null;
+  ephemeralDuration: number | null;
+  ephemeralOffToOn: boolean | null;
+  ephemeralOutOfSync: boolean | null;
+  bizPrivacyStatus: proto.WebMessageInfo.BizPrivacyStatus | null;
+  verifiedBizName: string | null;
+  mediaData: proto.IMediaData | null;
+  photoChange: proto.IPhotoChange | null;
+  userReceipt: proto.IUserReceipt[] | null;
+  quotedStickerData: proto.IMediaData | null;
+  futureproofData: Uint8Array<ArrayBufferLike> | null;
+  statusPsa: proto.IStatusPSA | null;
+  pollUpdates: proto.IPollUpdate[] | null;
+  pollAdditionalMetadata: proto.IPollAdditionalMetadata | null;
+  agentId: string | null;
+  statusAlreadyViewed: boolean | null;
+  messageSecret: Uint8Array<ArrayBufferLike> | null;
+  keepInChat: proto.IKeepInChat | null;
+  originalSelfAuthorUserJidString: string | null;
+  revokeMessageTimestamp: number | import('long') | null;
+  pinInChat: proto.IPinInChat | null;
+  premiumMessageInfo: proto.IPremiumMessageInfo | null;
+  is1PBizBotMessage: boolean | null;
+  isGroupHistoryMessage: boolean | null;
+  botMessageInvokerJid: string | null;
+  commentMetadata: proto.ICommentMetadata | null;
+  eventResponses: proto.IEventResponse[] | null;
+  reportingTokenInfo: proto.IReportingTokenInfo | null;
+  newsletterServerId: number | import('long') | null;
+  eventAdditionalMetadata: proto.IEventAdditionalMetadata | null;
+  isMentionedInStatus: boolean | null;
+  statusMentions: string[] | null;
+  targetMessageId: proto.IMessageKey | null;
+  messageAddOns: proto.IMessageAddOn[] | null;
+  statusMentionMessageInfo: proto.IStatusMentionMessage | null;
+  isSupportAiMessage: boolean | null;
+  statusMentionSources: string[] | null;
+  supportAiCitations: proto.ICitation[] | null;
+  botTargetId: string | null;
   @PrimaryColumn()
   sessionId: string;
 
@@ -42,12 +102,11 @@ export class MessageEntity {
 
   @Column({ nullable: true })
   timestamp?: number;
-
-  @Column({ nullable: true })
-  status?: string;
+  @Column({ type: 'int', nullable: true })
+  status!: number | null;
 
   @Column({ type: 'simple-json', nullable: true })
-  reactions?: { sender: string; emoji: string }[];
+  reactions!: proto.IReaction[] | null;
 
   @Column({ default: false })
   isDeleted: boolean;
@@ -95,7 +154,7 @@ export class MessageEntity {
       : Math.floor(Date.now() / 1000);
 
     // Extract message status if available
-    this.status = message.status ? String(message.status) : undefined;
+    this.status = message.status ? message.status : null;
 
     // Set deleted status
     this.isDeleted =
@@ -257,11 +316,12 @@ export class MessageEntity {
   private extractReactions(message: proto.IWebMessageInfo): void {
     if (message.reactions && message.reactions.length > 0) {
       this.reactions = message.reactions.map((reaction) => ({
-        sender: reaction.key?.participant || reaction.key?.remoteJid || '',
-        emoji: reaction.text || '👍',
+        key: reaction.key,
+        text: reaction.text || '👍',
+        senderTimestampMs: reaction.senderTimestampMs,
       }));
     } else {
-      this.reactions = undefined;
+      this.reactions = null;
     }
   }
 }

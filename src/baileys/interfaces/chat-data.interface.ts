@@ -1,11 +1,4 @@
 // source: src/baileys/baileys.services.ts
-import { proto } from '@whiskeysockets/baileys';
-
-// Interface for in-memory chat data storage
-export interface InMemoryChatData {
-  chatId: string;
-  messages: proto.IWebMessageInfo[];
-}
 
 // Interface for chat data in database
 export interface ChatDataEntity {

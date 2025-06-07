@@ -1,8 +1,9 @@
-import { Inject, Injectable, LoggerService } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, LoggerService } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Chat } from '@whiskeysockets/baileys';
+import { Chat, ChatModification, proto } from '@whiskeysockets/baileys';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
+import { ConnectionService } from './connection.service';
 import { GroupEntity } from './entityes/group.entity';
 
 @Injectable()
@@ -12,10 +13,13 @@ export class GroupService {
     private readonly logger: LoggerService,
     @InjectRepository(GroupEntity)
     private chatEntityRepository: Repository<GroupEntity>,
+    @Inject(forwardRef(() => ConnectionService))
+    private readonly connectionService: ConnectionService,
   ) {}
 
   /**
-   * Make sure a chat exists in the database
+   * Make sure a chat exists in the database.
+   * If it doesn't, we insert a bare-bones record with only sessionId and id.
    */
   private async ensureChatExists(
     sessionId: string,
@@ -29,9 +33,8 @@ export class GroupService {
       chat = new GroupEntity();
       chat.sessionId = sessionId;
       chat.id = chatId;
-      chat.name = '';
-      chat.isGroup = chatId.endsWith('@g.us');
-
+      // We no longer set `isGroup` here (that column was removed from the entity).
+      chat.name = ''; // at minimum, give this a default so the row is valid
       await this.chatEntityRepository.save(chat);
     }
 
@@ -39,32 +42,26 @@ export class GroupService {
   }
 
   /**
-   * Stores a chat using the GroupEntity
+   * Stores (or updates) a chat using the GroupEntity.
+   * We look up by (sessionId, chat.id); if it doesn't exist, we create it,
+   * then call updateFromBaileysGroup(...) and persist.
    */
   async storeEnhancedGroup(
     sessionId: string,
     chat: Chat,
   ): Promise<GroupEntity> {
     try {
-      // Try to find an existing chat entity
       let groupEntity = await this.chatEntityRepository.findOne({
-        where: {
-          sessionId,
-          id: chat.id,
-        },
+        where: { sessionId, id: chat.id },
       });
 
-      // If not found, create a new one
       if (!groupEntity) {
         groupEntity = new GroupEntity();
         groupEntity.sessionId = sessionId;
-        groupEntity.id = chat.id;
+        groupEntity.id = chat.id!;
       }
 
-      // Update the entity using our helper method
       groupEntity.updateFromBaileysGroup(chat);
-
-      // Save to database
       return await this.chatEntityRepository.save(groupEntity);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -74,7 +71,7 @@ export class GroupService {
   }
 
   /**
-   * Get a chat by its JID
+   * Lookup a chat by its JID (within a given session).
    */
   async getChatByJid(
     sessionId: string,
@@ -86,34 +83,33 @@ export class GroupService {
   }
 
   /**
-   * Get all chats for a session with optional filtering
+   * Get all chats for a session (with optional "archived" filter).
+   * Returns [entities[], totalCount].
    */
   async getGroups(
     sessionId: string,
-    options?: {
-      archived?: boolean;
-    },
+    options?: { archived?: boolean },
   ): Promise<[GroupEntity[], number]> {
-    const query = this.chatEntityRepository
+    const qb = this.chatEntityRepository
       .createQueryBuilder('chat')
       .where('chat.sessionId = :sessionId', { sessionId });
 
     if (options?.archived !== undefined) {
-      query.andWhere('chat.archived = :archived', {
-        archived: options.archived,
-      });
+      qb.andWhere('chat.archived = :archived', { archived: options.archived });
     }
 
-    // Add sorting: pinned chats first, then by last message timestamp
-    query
-      .orderBy('chat.pinned', 'ASC', 'NULLS LAST')
-      .addOrderBy('chat.conversationTimestamp', 'DESC');
+    // pin first (NULLs last), then most-recent conversationTimestamp
+    qb.orderBy('chat.pinned', 'ASC', 'NULLS LAST').addOrderBy(
+      'chat.conversationTimestamp',
+      'DESC',
+    );
 
-    return query.getManyAndCount();
+    return qb.getManyAndCount();
   }
 
   /**
-   * Updates the archive status of a chat
+   * Update the "archived" flag on a chat. If the chat doesn't exist yet,
+   * we create a bare-bones row via ensureChatExists, then set archived.
    */
   async updateArchiveStatus(
     sessionId: string,
@@ -121,20 +117,17 @@ export class GroupService {
     isArchived: boolean,
   ): Promise<void> {
     try {
-      // Find in the groupEntity
       const groupEntity = await this.chatEntityRepository.findOne({
         where: { sessionId, id: chatId },
       });
 
       if (groupEntity) {
-        // Update in the structure
         groupEntity.archived = isArchived;
         await this.chatEntityRepository.save(groupEntity);
         this.logger.log(
           `Updated archive status for ${chatId} to ${isArchived}`,
         );
       } else {
-        // Create the chat if it doesn't exist
         await this.ensureChatExists(sessionId, chatId);
         await this.chatEntityRepository.update(
           { sessionId, id: chatId },
@@ -148,16 +141,18 @@ export class GroupService {
   }
 
   /**
-   * Updates group participants in the database
+   * Updates the group's participant list in the database.
+   *
+   * Now that IGroupParticipant = { userJid: string; rank?: Rank | null },
+   * we operate on existingChat.participant: proto.IGroupParticipant[] | null.
    */
   async updateGroupParticipants(
     sessionId: string,
     groupId: string,
-    participants: string[],
+    participants: proto.IGroupParticipant[],
     action: 'add' | 'remove' | 'promote' | 'demote' | 'modify',
   ): Promise<void> {
     try {
-      // Find the existing chat
       const existingChat = await this.chatEntityRepository.findOne({
         where: { sessionId, id: groupId },
       });
@@ -169,63 +164,77 @@ export class GroupService {
         return;
       }
 
-      // Initialize metadata if needed
-      if (!existingChat.metadata) {
-        existingChat.metadata = {
-          participants: [],
-        };
+      // Ensure the "participant" array is initialized
+      if (!Array.isArray(existingChat.participant)) {
+        existingChat.participant = [];
       }
 
-      // Initialize participants array if it doesn't exist
-      if (!existingChat.metadata.participants) {
-        existingChat.metadata.participants = [];
-      }
-
-      // Update based on action
       switch (action) {
         case 'add':
-          for (const jid of participants) {
-            if (!existingChat.metadata.participants.some((p) => p.id === jid)) {
-              existingChat.metadata.participants.push({
-                id: jid,
-                isAdmin: false,
-                isSuperAdmin: false,
+          for (const newP of participants) {
+            // Only push if userJid is not already in existingChat.participant
+            const already = existingChat.participant.some(
+              (p) => p.userJid === newP.userJid,
+            );
+            if (!already) {
+              existingChat.participant.push({
+                userJid: newP.userJid,
+                // If the caller provided a rank, use it; otherwise default to REGULAR
+                rank:
+                  newP.rank != null
+                    ? newP.rank
+                    : proto.GroupParticipant.Rank.REGULAR,
               });
             }
           }
           break;
+
         case 'remove':
-          existingChat.metadata.participants =
-            existingChat.metadata.participants.filter(
-              (p) => !participants.includes(p.id),
-            );
+          // Filter out any existing entries whose userJid matches one of participants[]
+          existingChat.participant = existingChat.participant.filter(
+            (p) => !participants.some((remP) => remP.userJid === p.userJid),
+          );
           break;
+
         case 'promote':
-        case 'demote':
-          for (const jid of participants) {
-            const participant = existingChat.metadata.participants.find(
-              (p) => p.id === jid,
+          // "Promote" means set rank = ADMIN for each listed userJid
+          for (const promoP of participants) {
+            const match = existingChat.participant.find(
+              (p) => p.userJid === promoP.userJid,
             );
-            if (participant) {
-              participant.isAdmin = action === 'promote';
+            if (match) {
+              match.rank = proto.GroupParticipant.Rank.ADMIN;
             }
           }
           break;
-        case 'modify':
-          // Handle modify action
-          for (const jid of participants) {
-            const participant = existingChat.metadata.participants.find(
-              (p) => p.id === jid,
+
+        case 'demote':
+          // "Demote" means set rank = REGULAR for each listed userJid
+          for (const demoP of participants) {
+            const match = existingChat.participant.find(
+              (p) => p.userJid === demoP.userJid,
             );
-            if (participant) {
-              // You might need to handle specific modifications if Baileys provides them
+            if (match) {
+              match.rank = proto.GroupParticipant.Rank.REGULAR;
             }
           }
+          break;
+
+        case 'modify':
+          // "Modify" lets you update whatever `rank` was passed.
+          // If more fields existed on IGroupParticipant, you would update them here.
+          for (const modP of participants) {
+            const match = existingChat.participant.find(
+              (p) => p.userJid === modP.userJid,
+            );
+            if (match && modP.rank != null) {
+              match.rank = modP.rank;
+            }
+          }
+          break;
       }
 
-      // Save the updated chat
       await this.chatEntityRepository.save(existingChat);
-
       this.logger.log(
         `Updated ${participants.length} participants for group ${groupId} in session ${sessionId}: ${action}`,
       );
@@ -236,5 +245,122 @@ export class GroupService {
         err,
       );
     }
+  }
+  async clearMultipleGroupChats(
+    sessionId: string,
+    groupIds?: string[],
+  ): Promise<{
+    results: { groupId: string; success: boolean; error?: string }[];
+  }> {
+    const results: {
+      groupId: string;
+      success: boolean;
+      error?: string;
+    }[] = [];
+
+    // Get connection for the given sessionId
+    const connection = this.connectionService.getConnection(sessionId);
+    if (!connection) {
+      throw new Error('Session not found');
+    }
+    if (connection.status !== 'connected') {
+      throw new Error('Connection is not ready');
+    }
+    if (!connection.socket) {
+      throw new Error('Socket is not initialized');
+    }
+    const socket = connection.socket;
+
+    let groupsToClear: GroupEntity[] = [];
+
+    if (!groupIds || groupIds.length === 0) {
+      // Find all archived groups for this session
+      groupsToClear = await this.chatEntityRepository.find({
+        where: { sessionId, archived: true },
+      });
+    } else {
+      // Find only the specified groups for this session
+      groupsToClear = await this.chatEntityRepository.findBy({
+        id: In(groupIds),
+        sessionId,
+      });
+    }
+
+    for (const group of groupsToClear) {
+      console.log('--- Processing group:', group.id, '---');
+      console.dir(group, { depth: null, colors: true }); // זה מראה את אובייקט הקבוצה מה-DB
+      try {
+        if (group.messages && group.messages.length > 0) {
+          const lastHistorySyncMsg = group.messages[0];
+          const lastWebMessageInfo = lastHistorySyncMsg.message;
+
+          if (lastWebMessageInfo && lastWebMessageInfo.key) {
+            // המרת messageTimestamp למספר (כפי שביקשת)
+            // הוספתי טיפול למקרה שזה נשמר כמחרוזת ב-DB
+            const messageTimestampAsNumber: number =
+              typeof lastWebMessageInfo.messageTimestamp === 'string'
+                ? parseInt(lastWebMessageInfo.messageTimestamp, 10)
+                : typeof lastWebMessageInfo.messageTimestamp === 'object' &&
+                    lastWebMessageInfo.messageTimestamp !== null
+                  ? lastWebMessageInfo.messageTimestamp.low // אם זה אובייקט Long
+                  : lastWebMessageInfo.messageTimestamp || 0; // אם זה כבר מספר או undefined/null
+
+            // --- הדפסת המשתנים לפני השליחה ל-chatModify ---
+            const chatModifyPayload = {
+              delete: true,
+              lastMessages: [
+                {
+                  key: {
+                    id: lastWebMessageInfo.key.id,
+                    remoteJid: lastWebMessageInfo.key.remoteJid,
+                    fromMe: lastWebMessageInfo.key.fromMe,
+                  },
+                  messageTimestamp: messageTimestampAsNumber,
+                },
+              ],
+            } as ChatModification;
+
+            console.log('--- Sending to chatModify: ---');
+            console.dir(chatModifyPayload, { depth: null, colors: true });
+            console.log('--- Target group ID:', group.id, '---');
+            // --- סוף הדפסת המשתנים ---
+
+            await socket.chatModify(chatModifyPayload, group.id);
+            results.push({ groupId: group.id, success: true });
+          } else {
+            console.warn(
+              `Could not find valid last message info for group: ${group.id}`,
+            );
+            results.push({
+              groupId: group.id,
+              success: false,
+              error: 'No valid last message info',
+            });
+          }
+        } else {
+          console.warn(
+            `No messages found in group object for group: ${group.id}. Cannot delete using lastMessages.`,
+          );
+          results.push({
+            groupId: group.id,
+            success: false,
+            error: 'No messages in group object',
+          });
+        }
+
+        // כאן ה-success: true נדחף רק אם ה-await socket.chatModify לא זרק שגיאה.
+        // אם אתה רוצה לוודא שה-API של וואטסאפ אישר את המחיקה, תצטרך לבדוק
+        // את ערך ההחזרה של socket.chatModify (אם הוא מספק אינדיקציה כזו)
+        // או לעקוב אחר אירועים של Baileys שמאשרים מחיקה (לדוגמה: chats.update)
+      } catch (error) {
+        results.push({
+          groupId: group.id,
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return { results };
   }
 }

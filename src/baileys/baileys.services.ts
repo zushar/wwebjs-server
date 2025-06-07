@@ -166,106 +166,12 @@ export class BaileysService {
     };
   }
 
-  // function to clear group chat
-  async clearGroupChat(sessionId: string, groupId: string): Promise<void> {
-    try {
-      const group = await this.groupService.getChatByJid(sessionId, groupId);
-      if (!group) {
-        this.logger.warn(`No messages found in chat ${groupId} to clear.`);
-        return;
-      }
-
-      const connection = this.connectionService.getConnection(sessionId);
-      if (!connection?.socket) {
-        throw new Error(`Socket not available for session ${sessionId}`);
-      }
-
-      const jid = group.id;
-      if (!jid) {
-        throw new Error(`Invalid group ID: ${groupId}`);
-      }
-
-      if (!group.lastMessageId || !group.lastMessageTimestamp) {
-        this.logger.warn(`No last message found in group ${groupId} to clear.`);
-        return;
-      }
-
-      await connection.socket.chatModify(
-        {
-          clear: true,
-          lastMessages: [
-            {
-              key: {
-                id: group.lastMessageId,
-                remoteJid: jid,
-                fromMe: false,
-              },
-              messageTimestamp: group.lastMessageTimestamp,
-            },
-          ],
-        },
-        jid,
-      );
-
-      this.logger.log(
-        `Successfully cleared group chat ${groupId} in session ${sessionId}`,
-      );
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.logger.error(`Failed to clear group chat ${groupId}:`, err);
-      throw err;
-    }
-  }
-
   async clearMultipleGroupChats(
     sessionId: string,
-    groupIds: string[],
+    groupIds?: string[],
   ): Promise<{
-    success: boolean;
-    results: Array<{
-      groupId: string;
-      success: boolean;
-      error?: string;
-    }>;
+    results: { groupId: string; success: boolean; error?: string }[];
   }> {
-    const results: Array<{
-      groupId: string;
-      success: boolean;
-      error?: string;
-    }> = [];
-
-    for (const groupId of groupIds) {
-      try {
-        await this.clearGroupChat(sessionId, groupId);
-        results.push({
-          groupId,
-          success: true,
-        });
-
-        // Add delay between operations to avoid rate limiting
-        if (groupIds.length > 1) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        results.push({
-          groupId,
-          success: false,
-          error: errorMessage,
-        });
-
-        this.logger.error(
-          `Failed to clear group chat ${groupId}: ${errorMessage}`,
-        );
-      }
-    }
-
-    const successCount = results.filter((r) => r.success).length;
-
-    return {
-      success: successCount > 0,
-      results,
-    };
+    return await this.groupService.clearMultipleGroupChats(sessionId, groupIds);
   }
 }

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { LoggingModule } from 'src/logging/logging.module';
 import { BaileysController } from './baileys.controller';
@@ -13,6 +13,7 @@ import { MessageService } from './message.service';
   imports: [
     LoggingModule,
     TypeOrmModule.forFeature([GroupEntity, MessageEntity]),
+    forwardRef(() => BaileysModule),
   ],
   providers: [BaileysService, ConnectionService, MessageService, GroupService],
   controllers: [BaileysController],
