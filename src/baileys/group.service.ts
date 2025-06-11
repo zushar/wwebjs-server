@@ -2,9 +2,10 @@ import { forwardRef, Inject, Injectable, LoggerService } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Chat, ChatModification, proto } from '@whiskeysockets/baileys';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { ConnectionService } from './connection.service';
 import { GroupEntity } from './entityes/group.entity';
+import { WChat } from './interfaces/chat-data.interface';
 
 @Injectable()
 export class GroupService {
@@ -270,91 +271,86 @@ export class GroupService {
       throw new Error('Socket is not initialized');
     }
     const socket = connection.socket;
+    const chats = this.connectionService.getChats();
 
-    let groupsToClear: GroupEntity[] = [];
+    let groupsToClear: WChat[] = [];
 
     if (!groupIds || groupIds.length === 0) {
       // Find all archived groups for this session
-      groupsToClear = await this.chatEntityRepository.find({
-        where: { sessionId, archived: true },
-      });
+      groupsToClear = Array.from(chats.values()).filter(
+        (chat) => chat.archived === true,
+      );
     } else {
       // Find only the specified groups for this session
-      groupsToClear = await this.chatEntityRepository.findBy({
-        id: In(groupIds),
-        sessionId,
-      });
+      groupsToClear = Array.from(chats.values()).filter(
+        (chat) => chat.chatid != null && groupIds.includes(chat.chatid),
+      );
     }
 
     for (const group of groupsToClear) {
-      console.log('--- Processing group:', group.id, '---');
-      console.dir(group, { depth: null, colors: true }); // זה מראה את אובייקט הקבוצה מה-DB
+      console.log('--- Processing group:', group.chatid, '---');
+      console.dir(group, { depth: null, colors: true });
       try {
-        if (group.messages && group.messages.length > 0) {
-          const lastHistorySyncMsg = group.messages[0];
-          const lastWebMessageInfo = lastHistorySyncMsg.message;
+        if (
+          group.messageTimestamp &&
+          group.messageId &&
+          group.fromMe !== null &&
+          group.chatid
+        ) {
+          // --- הדפסת המשתנים לפני השליחה ל-chatModify ---
+          const chatModifyPayload: ChatModification = {
+            delete: true,
+            lastMessages: [
+              {
+                key: {
+                  id: group.messageId,
+                  remoteJid: group.chatid,
+                  fromMe: group.fromMe,
+                },
+                messageTimestamp: group.messageTimestamp,
+              },
+            ],
+          };
 
-          if (lastWebMessageInfo && lastWebMessageInfo.key) {
-            // המרת messageTimestamp למספר (כפי שביקשת)
-            // הוספתי טיפול למקרה שזה נשמר כמחרוזת ב-DB
-            const messageTimestampAsNumber: number =
-              typeof lastWebMessageInfo.messageTimestamp === 'string'
-                ? parseInt(lastWebMessageInfo.messageTimestamp, 10)
-                : typeof lastWebMessageInfo.messageTimestamp === 'object' &&
-                    lastWebMessageInfo.messageTimestamp !== null
-                  ? lastWebMessageInfo.messageTimestamp.low // אם זה אובייקט Long
-                  : lastWebMessageInfo.messageTimestamp || 0; // אם זה כבר מספר או undefined/null
+          console.log('--- Sending to chatModify: ---');
+          console.dir(chatModifyPayload, { depth: null, colors: true });
+          console.log('--- Target group ID:', group.chatid, '---');
+          // --- סוף הדפסת המשתנים ---
 
-            // --- הדפסת המשתנים לפני השליחה ל-chatModify ---
-            const chatModifyPayload = {
-              delete: true,
+          await socket.chatModify(chatModifyPayload, group.chatid);
+          await socket.chatModify(
+            {
+              archive: true,
               lastMessages: [
                 {
                   key: {
-                    id: lastWebMessageInfo.key.id,
-                    remoteJid: lastWebMessageInfo.key.remoteJid,
-                    fromMe: lastWebMessageInfo.key.fromMe,
+                    id: group.messageId,
+                    remoteJid: group.chatid,
+                    fromMe: group.fromMe,
                   },
-                  messageTimestamp: messageTimestampAsNumber,
+                  messageTimestamp: group.messageTimestamp,
                 },
               ],
-            } as ChatModification;
-
-            console.log('--- Sending to chatModify: ---');
-            console.dir(chatModifyPayload, { depth: null, colors: true });
-            console.log('--- Target group ID:', group.id, '---');
-            // --- סוף הדפסת המשתנים ---
-
-            await socket.chatModify(chatModifyPayload, group.id);
-            results.push({ groupId: group.id, success: true });
-          } else {
-            console.warn(
-              `Could not find valid last message info for group: ${group.id}`,
-            );
-            results.push({
-              groupId: group.id,
-              success: false,
-              error: 'No valid last message info',
-            });
-          }
+            },
+            group.chatid,
+          );
+          this.logger.log(
+            `Successfully cleared group ${group.chatid} in session ${sessionId}`,
+          );
+          results.push({ groupId: group.chatid ?? 'unknown', success: true });
         } else {
           console.warn(
-            `No messages found in group object for group: ${group.id}. Cannot delete using lastMessages.`,
+            `Could not find valid last message info for group: ${group.chatid}`,
           );
           results.push({
-            groupId: group.id,
+            groupId: group.chatid ?? 'unknown',
             success: false,
-            error: 'No messages in group object',
+            error: 'No valid last message info',
           });
         }
-
-        // כאן ה-success: true נדחף רק אם ה-await socket.chatModify לא זרק שגיאה.
-        // אם אתה רוצה לוודא שה-API של וואטסאפ אישר את המחיקה, תצטרך לבדוק
-        // את ערך ההחזרה של socket.chatModify (אם הוא מספק אינדיקציה כזו)
-        // או לעקוב אחר אירועים של Baileys שמאשרים מחיקה (לדוגמה: chats.update)
       } catch (error) {
         results.push({
-          groupId: group.id,
+          groupId: group.chatid ?? 'unknown',
           success: false,
           error: error instanceof Error ? error.message : String(error),
         });

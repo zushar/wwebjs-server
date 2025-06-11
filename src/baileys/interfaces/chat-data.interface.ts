@@ -1,35 +1,13 @@
 // source: src/baileys/baileys.services.ts
-
-// Interface for chat data in database
-export interface ChatDataEntity {
-  id: string;
-  sessionId: string;
-  chatId: string;
-  metadata: Record<string, any>;
-  messageCount: number;
-  lastMessageAt: Date;
-}
-
-// Interface for message data in database
-export interface MessageDataEntity {
-  id: string;
-  sessionId: string;
-  chatId: string;
-  fromMe: boolean;
-  senderJid?: string;
-  messageContent: Record<string, any>;
-  timestamp: Date;
-}
-
-// Interface for WhatsApp chat
-export interface WhatsAppChat {
-  id: string;
-  name?: string | null;
-  unreadCount?: number | null;
-  // Use correct property names to match Baileys types
-  isGroup?: boolean | null; // We'll handle this property ourselves
-  archived?: boolean | null; // This is the correct property name in Baileys
-  settings?: {
-    isArchived?: boolean;
-  };
+import { proto } from '@whiskeysockets/baileys';
+import Long from 'long';
+export interface WChat {
+  chatid?: string | null;
+  chatName?: string | null;
+  participant?: proto.IGroupParticipant[] | null;
+  archived?: boolean | null;
+  isReadOnly?: boolean | null;
+  messageId?: string | null;
+  fromMe?: boolean | null;
+  messageTimestamp?: number | Long | null;
 }

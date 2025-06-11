@@ -170,7 +170,12 @@ export class BaileysService {
     sessionId: string,
     groupIds?: string[],
   ): Promise<{
-    results: { groupId: string; success: boolean; error?: string }[];
+    results: {
+      groupId: string;
+      groupName?: string;
+      success: boolean;
+      error?: string;
+    }[];
   }> {
     return await this.groupService.clearMultipleGroupChats(sessionId, groupIds);
   }

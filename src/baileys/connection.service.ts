@@ -1,8 +1,7 @@
 import { Boom } from '@hapi/boom';
-import { Inject, Injectable, LoggerService, forwardRef } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, LoggerService } from '@nestjs/common';
 import makeWASocket, {
   Browsers,
-  Chat,
   ConnectionState,
   DisconnectReason,
   GroupMetadata,
@@ -20,11 +19,12 @@ import { LoggerUtil } from 'src/utils/logget.util';
 import { Logger as WinstonLogger } from 'winston';
 import { WhatsAppLoggerService } from '../logging/whatsapp-logger.service';
 import { GroupService } from './group.service';
+import { WChat } from './interfaces/chat-data.interface';
 import { MessageService } from './message.service';
-
 @Injectable()
 export class ConnectionService {
   private connections: Map<string, Connection> = new Map();
+  private chats: Map<string, WChat> = new Map();
   private readonly sessionsDir: string;
   private readonly maxReconnectAttempts = 5;
   private readonly reconnectInterval = 5000;
@@ -115,7 +115,7 @@ export class ConnectionService {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, baileyLogger),
       },
-      browser: Browsers.ubuntu('Chrome'),
+      browser: Browsers.windows('chrome'),
       mobile: false,
       printQRInTerminal: false, // Server environment doesn't need terminal QR
       connectTimeoutMs: 60000, // 60 second connection timeout
@@ -359,53 +359,223 @@ export class ConnectionService {
       // Handle messaging-history.set
       connection.socket.ev.on(
         'messaging-history.set',
-        this.wrapAsyncHandler(
-          async ({
-            chats: newChats,
-            messages: newMessages,
-            syncType: syncType,
-            progress: progress,
-            isLatest: isLatest,
-          }) => {
-            console.log(
-              `messaging-history.set event received syncType: ${syncType} progress: ${progress} isLatest: ${isLatest}`,
+        ({
+          chats: newChats,
+          messages: newMessages,
+          syncType: syncType,
+          progress: progress,
+          isLatest: isLatest,
+        }) => {
+          console.log(
+            `messaging-history.set event received syncType: ${syncType} progress: ${progress} isLatest: ${isLatest}`,
+          );
+          if (Array.isArray(newChats)) {
+            const groupChats = newChats.filter((chat) =>
+              chat.id.endsWith('@g.us'),
             );
-            // Process new chats - filter for groups only
-            if (Array.isArray(newChats)) {
-              const groupChats = newChats.filter((chat) =>
-                chat.id.endsWith('@g.us'),
-              );
-              // console.log('this is a group');
-              // console.dir(groupChats[0], { depth: null, colors: true });
-              for (const chat of groupChats) {
-                if (
-                  chat.id === '120363400114178058@g.us' ||
-                  chat.id === '120363400771049095@g.us' ||
-                  chat.id === '120363420498627074@g.us'
-                ) {
-                  console.log('this is a group chat');
-                  console.dir(chat, { depth: null, colors: true });
-                }
-                try {
-                  await this.groupService.storeEnhancedGroup(sessionId, chat);
-                } catch (error) {
-                  this.logger.error(
-                    `Failed to store group chat ${chat.id}:`,
-                    error,
+            for (const chat of groupChats) {
+              try {
+                const lastMessage =
+                  chat.messages?.[chat.messages.length - 1]?.message;
+                this.chats.set(chat.id, {
+                  chatid: chat.id,
+                  chatName: chat.name,
+                  archived: chat.archived,
+                  isReadOnly: chat.readOnly,
+                  participant: chat.participant ?? null,
+                  messageId: lastMessage?.key?.id ?? null,
+                  fromMe: lastMessage?.key?.fromMe ?? null,
+                  messageTimestamp: lastMessage?.messageTimestamp ?? null,
+                });
+              } catch (error) {
+                this.logger.error(
+                  `Failed to store group chat ${chat.id}:`,
+                  error,
+                );
+              }
+            }
+          }
+          // Filter out non-group messages
+          const groupMessages = newMessages.filter((message) => {
+            const isGroupMessage = message.key.remoteJid?.endsWith('@g.us');
+            return isGroupMessage;
+          });
+          for (const message of groupMessages) {
+            try {
+              if (message.key.remoteJid) {
+                const cachedChat = this.chats.get(message.key.remoteJid);
+                if (cachedChat) {
+                  const cachedTimestamp = cachedChat.messageTimestamp || 0;
+                  const newTimestamp = message.messageTimestamp || 0;
+                  if (newTimestamp > cachedTimestamp) {
+                    this.chats.set(message.key.remoteJid, {
+                      ...cachedChat,
+                      messageId: message.key.id,
+                      fromMe: message.key.fromMe ?? null,
+                      messageTimestamp: message.messageTimestamp,
+                    });
+                    console.log(
+                      `Updating cached chat for ${message.key.remoteJid} with new message`,
+                    );
+                  }
+                } else {
+                  this.logger.warn(
+                    `No cached chat found for ${message.key.remoteJid}`,
                   );
                 }
               }
+            } catch (error) {
+              this.logger.error(
+                `Failed to store group message ${message.key.id}:`,
+                error,
+              );
             }
-            // Filter out non-group messages
-            const groupMessages = newMessages.filter((message) =>
+          }
+        },
+      );
+
+      // Handle chat upserts - filter for groups only
+      connection.socket.ev.on('chats.upsert', (newChats) => {
+        console.log(
+          `chats.upsert event received with ${newChats.length} chats`,
+        );
+        if (Array.isArray(newChats)) {
+          const groupChats = newChats.filter((chat) =>
+            chat.id.endsWith('@g.us'),
+          );
+
+          for (const chat of groupChats) {
+            try {
+              if (this.chats.has(chat.id)) {
+                const lastMessage =
+                  chat.messages?.[chat.messages.length - 1]?.message;
+
+                this.chats.set(chat.id, {
+                  chatid: chat.id,
+                  chatName: chat.name,
+                  archived: chat.archived,
+                  isReadOnly: chat.readOnly,
+                  participant: chat.participant ?? null,
+                  messageId: lastMessage?.key?.id ?? null,
+                  fromMe: lastMessage?.key?.fromMe ?? null,
+                  messageTimestamp: lastMessage?.messageTimestamp ?? null,
+                });
+              } else {
+                this.chats.set(chat.id, {
+                  chatid: chat.id,
+                  chatName: chat.name,
+                  archived: chat.archived,
+                  isReadOnly: chat.readOnly,
+                  participant: chat.participant ?? null,
+                  messageId: null,
+                  fromMe: null,
+                  messageTimestamp: null,
+                });
+              }
+            } catch (error) {
+              this.logger.error(
+                `Failed to store group chat ${chat.id}:`,
+                error,
+              );
+            }
+          }
+        }
+      });
+
+      // Handle chat updates - filter for groups only
+      connection.socket.ev.on('chats.update', (updates) => {
+        console.log(
+          `chats.update event received with ${updates.length} updates`,
+        );
+        for (const update of updates) {
+          if (update.id && update.id.endsWith('@g.us')) {
+            try {
+              const cachedChat = this.chats.get(update.id);
+              if (cachedChat) {
+                this.chats.set(update.id, {
+                  ...cachedChat,
+                  chatName: update.name ?? cachedChat.chatName,
+                  archived: update.archived ?? cachedChat.archived,
+                  isReadOnly: update.readOnly ?? cachedChat.isReadOnly,
+                });
+                console.log(
+                  `Updating cached chat for ${update.id} with new data`,
+                );
+              } else {
+                this.chats.set(update.id, {
+                  chatid: update.id,
+                  chatName: update.name,
+                  archived: update.archived,
+                  isReadOnly: update.readOnly,
+                  participant: update.participant ?? null,
+                  messageId: null,
+                  fromMe: null,
+                  messageTimestamp: null,
+                });
+                this.logger.warn(`No cached chat found for ${update.id}`);
+              }
+            } catch (error) {
+              this.logger.error(
+                `Failed to update group chat ${update.id}:`,
+                error,
+              );
+            }
+          }
+        }
+      });
+
+      // Handle incoming message updates
+      connection.socket.ev.on(
+        'messages.upsert',
+        ({ messages, type, requestId }) => {
+          console.log(
+            `messages.upsert event received type: ${type} requestId: ${requestId}`,
+          );
+          if (Array.isArray(messages)) {
+            const groupMessages = messages.filter((message) =>
               message.key.remoteJid?.endsWith('@g.us'),
             );
-            console.log('this is a group message');
-            console.dir(groupMessages[0], { depth: null, colors: true });
-            // Process group messages
             for (const message of groupMessages) {
               try {
-                await this.messageService.storeMessage(sessionId, message);
+                if (message.key.remoteJid) {
+                  let cachedChat = this.chats.get(message.key.remoteJid);
+                  if (!cachedChat) {
+                    // Initialize minimal chat if not exist
+                    cachedChat = {
+                      chatid: message.key.remoteJid,
+                      archived: false,
+                      chatName: null,
+                      participant: null,
+                      isReadOnly: false,
+                      messageId: message.key.id,
+                      fromMe: message.key.fromMe ?? null,
+                      messageTimestamp: message.messageTimestamp,
+                    };
+                    this.chats.set(message.key.remoteJid, cachedChat);
+                    this.logger.warn(
+                      `Initialized new cached chat for ${message.key.remoteJid}`,
+                    );
+                  }
+                  if (cachedChat) {
+                    const cachedTimestamp = cachedChat.messageTimestamp || 0;
+                    const newTimestamp = message.messageTimestamp || 0;
+                    if (newTimestamp > cachedTimestamp) {
+                      this.chats.set(message.key.remoteJid, {
+                        ...cachedChat,
+                        messageId: message.key.id,
+                        fromMe: message.key.fromMe ?? null,
+                        messageTimestamp: message.messageTimestamp,
+                      });
+                      console.log(
+                        `Updating cached chat for ${message.key.remoteJid} with new message`,
+                      );
+                    }
+                  } else {
+                    this.logger.warn(
+                      `No cached chat found for ${message.key.remoteJid}`,
+                    );
+                  }
+                }
               } catch (error) {
                 this.logger.error(
                   `Failed to store group message ${message.key.id}:`,
@@ -413,158 +583,60 @@ export class ConnectionService {
                 );
               }
             }
-          },
-        ),
+          }
+        },
       );
-
-      // Handle chat upserts - filter for groups only
-      connection.socket.ev.on(
-        'chats.upsert',
-        this.wrapAsyncHandler(async (newChats) => {
-          if (Array.isArray(newChats)) {
-            const groupChats = newChats.filter((chat) =>
-              chat.id.endsWith('@g.us'),
-            );
-
-            for (const chat of groupChats) {
-              await this.groupService.storeEnhancedGroup(sessionId, chat);
-            }
-          }
-        }),
-      );
-
-      // Handle chat updates - filter for groups only
-      connection.socket.ev.on(
-        'chats.update',
-        this.wrapAsyncHandler(async (updates: Partial<Chat>[]) => {
-          for (const update of updates) {
-            if (update.id && update.id.endsWith('@g.us')) {
-              // Get the existing chat first
-              const existingChat = await this.groupService.getChatByJid(
-                sessionId,
-                update.id,
-              );
-              if (existingChat) {
-                // Merge the update with existing data
-                const updatedChat = { ...existingChat, ...update } as Chat;
-                await this.groupService.storeEnhancedGroup(
-                  sessionId,
-                  updatedChat,
-                );
-              }
-
-              // Handle archive status specially (for backward compatibility)
-              if ('archived' in update) {
-                const isArchived = Boolean(update.archived);
-                await this.groupService.updateArchiveStatus(
-                  sessionId,
-                  update.id,
-                  isArchived,
-                );
-              }
-            }
-          }
-        }),
-      );
-
-      // Handle incoming message updates
-      connection.socket.ev.on('messages.upsert', ({ messages, type }) => {
-        if (type === 'notify') {
-          // These are new messages that should be stored
-          for (const message of messages) {
-            try {
-              // Check for valid message data
-              if (message.key?.id && message.key.remoteJid) {
-                // Log incoming message (optional)
-                this.logger.debug?.(
-                  `Received message from ${message.key.fromMe ? 'self' : 'others'}: ${message.key.id}`,
-                  { sessionId, chatJid: message.key.remoteJid },
-                );
-
-                // Store in database
-                void this.messageService.storeMessage(sessionId, message);
-              }
-            } catch (error) {
-              const err =
-                error instanceof Error ? error : new Error(String(error));
-              this.logger.error(
-                `Failed to process incoming message ${message.key?.id || 'unknown'}:`,
-                err,
-              );
-            }
-          }
-        }
-      });
-
-      // Handle message deletions
-      connection.socket.ev.on('messages.delete', (data) => {
-        try {
-          if ('all' in data && data.jid) {
-            // All messages in a chat were deleted
-            this.logger.log(
-              `All messages deleted in chat ${data.jid}`,
-              'MessageService',
-            );
-            void this.messageService.deleteAllMessagesInChat(
-              sessionId,
-              data.jid,
-            );
-          } else if (
-            'keys' in data &&
-            Array.isArray(data.keys) &&
-            data.keys.length > 0
-          ) {
-            // Specific messages were deleted
-            this.logger.log(
-              `Specific messages deleted ${data.keys[0]?.remoteJid ? `in chat ${data.keys[0].remoteJid}` : '(unknown chat)'}`,
-              'MessageService',
-            );
-
-            for (const key of data.keys) {
-              if (key.remoteJid && key.id) {
-                void this.messageService.deleteMessage(
-                  sessionId,
-                  key.remoteJid,
-                  key.id,
-                  key.fromMe === null ? undefined : key.fromMe,
-                );
-              }
-            }
-          }
-        } catch (error) {
-          const err = error instanceof Error ? error : new Error(String(error));
-          this.logger.error('Failed to process message deletion event:', err);
-        }
-      });
 
       // Handle message updates (reactions, edits, etc.)
-      connection.socket.ev.on('messages.update', (updates) => {
-        for (const update of updates) {
+      connection.socket.ev.on('messages.update', (newMessagesUp) => {
+        console.log(
+          `messages.update event received with ${newMessagesUp.length} updates`,
+        );
+        const groupMessages = newMessagesUp.filter((message) =>
+          message.key.remoteJid?.endsWith('@g.us'),
+        );
+        for (const message of groupMessages) {
+          const messageKey = message.key;
+          const MessageUp = message.update;
           try {
-            if (
-              update.key &&
-              update.key.remoteJid &&
-              update.key.id &&
-              update.update
-            ) {
-              this.logger.debug?.(
-                `Message update for ${update.key.id}: ${Object.keys(update.update).join(', ')}`,
-                { sessionId, chatJid: update.key.remoteJid },
-              );
-
-              void this.messageService.updateMessage(
-                sessionId,
-                update.key.remoteJid,
-                update.key.id,
-                update,
-              );
+            if (messageKey.remoteJid) {
+              let cachedChat = this.chats.get(messageKey.remoteJid);
+              // אם הצ'אט לא קיים, נאתחל אותו עם ערכים בסיסיים
+              if (!cachedChat) {
+                cachedChat = {
+                  chatid: messageKey.remoteJid,
+                  chatName: null,
+                  archived: false,
+                  isReadOnly: false,
+                  participant: null,
+                  messageId: messageKey.id,
+                  fromMe: messageKey.fromMe ?? null,
+                  messageTimestamp: MessageUp.messageTimestamp,
+                };
+                this.chats.set(messageKey.remoteJid, cachedChat);
+                this.logger.log(
+                  `Initialized new cached chat for ${messageKey.remoteJid}`,
+                  'ConnectionService',
+                );
+              }
+              const cachedTimestamp = cachedChat.messageTimestamp || 0;
+              const newTimestamp = MessageUp.messageTimestamp || 0;
+              if (newTimestamp > cachedTimestamp) {
+                this.chats.set(messageKey.remoteJid, {
+                  ...cachedChat,
+                  messageId: messageKey.id,
+                  fromMe: messageKey.fromMe ?? null,
+                  messageTimestamp: MessageUp.messageTimestamp,
+                });
+                console.log(
+                  `Updating cached chat for ${messageKey.remoteJid} with new message`,
+                );
+              }
             }
           } catch (error) {
-            const err =
-              error instanceof Error ? error : new Error(String(error));
             this.logger.error(
-              `Failed to process message update for ${update.key?.id || 'unknown'}:`,
-              err,
+              `Failed to store group message ${messageKey.id}:`,
+              error,
             );
           }
         }
@@ -667,6 +739,9 @@ export class ConnectionService {
         'ConnectionService',
       );
     }
+  }
+  getChats(): Map<string, WChat> {
+    return this.chats;
   }
   private wrapAsyncHandler<T>(
     handler: (data: T) => Promise<void>,
