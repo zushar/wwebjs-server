@@ -4,7 +4,6 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BaileysModule } from './baileys/baileys.module';
 import { GroupEntity } from './baileys/entityes/group.entity';
-import { MessageEntity } from './baileys/entityes/message.entity';
 import { LoggingModule } from './logging/logging.module';
 import { RequestLoggerMiddleware } from './logging/request-logger.middleware';
 import { WwebjsModule } from './wwebjs/wwebjs.module';
@@ -19,7 +18,7 @@ import { WwebjsModule } from './wwebjs/wwebjs.module';
       username: process.env.DB_USERNAME || 'postgres',
       password: process.env.DB_PASSWORD || 'postgres',
       database: process.env.DB_DATABASE || 'whatsapp',
-      entities: [GroupEntity, MessageEntity],
+      entities: [GroupEntity],
       synchronize: process.env.NODE_ENV !== 'production', // Auto-create tables in dev
     }),
     WwebjsModule,

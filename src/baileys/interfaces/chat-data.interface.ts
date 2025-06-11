@@ -2,7 +2,8 @@
 import { proto } from '@whiskeysockets/baileys';
 import Long from 'long';
 export interface WChat {
-  chatid?: string | null;
+  sessionId: string;
+  chatid: string;
   chatName?: string | null;
   participant?: proto.IGroupParticipant[] | null;
   archived?: boolean | null;
