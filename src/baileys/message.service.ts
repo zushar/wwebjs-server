@@ -185,7 +185,7 @@ export class MessageService {
     results: MessageResult[];
   }> {
     const results: MessageResult[] = [];
-
+    let numGroups = 0;
     for (const recipient of recipients) {
       try {
         await this.sendMessage(sessionId, recipient, content, type);
@@ -198,9 +198,16 @@ export class MessageService {
           error: errorObj.message,
         });
       }
-
+      if (numGroups >= 30) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.random() * 1000 + 2000),
+        );
+        numGroups = 0;
+      }
       // Add a small delay between messages to avoid rate limiting
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.random() * 1000 + 500),
+      );
     }
 
     return {

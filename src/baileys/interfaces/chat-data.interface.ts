@@ -11,4 +11,5 @@ export interface WChat {
   messageParticipant?: string | null | undefined;
   fromMe?: boolean | null | undefined;
   messageTimestamp?: number | Long | null | undefined;
+  asNewMessage?: boolean;
 }

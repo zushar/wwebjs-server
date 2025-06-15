@@ -140,74 +140,11 @@ export class BaileysController {
       throw new HttpException(errorMessage, HttpStatus.BAD_REQUEST);
     }
   }
-  // New group-related endpoints
-  @Get('groups')
-  async getAllGroups(@Query('clientId') clientId?: string) {
-    try {
-      if (!clientId) {
-        throw new HttpException(
-          'clientId query parameter is required',
-          HttpStatus.BAD_REQUEST,
-        );
-      }
-
-      const [groups, count] = await this.groupService.getGroups(clientId, {
-        archived: false,
-      });
-
-      return {
-        success: true,
-        data: groups,
-        count,
-        message: `Retrieved ${count} groups for client ${clientId}`,
-      };
-    } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Failed to retrieve groups';
-      this.logger.error(`Error retrieving groups: ${errorMessage}`);
-      throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-  }
-
-  @Get('groups/archived')
-  async getArchivedGroups(@Query('clientId') clientId?: string) {
-    try {
-      if (!clientId) {
-        throw new HttpException(
-          'clientId query parameter is required',
-          HttpStatus.BAD_REQUEST,
-        );
-      }
-
-      const [archivedGroups, count] = await this.groupService.getGroups(
-        clientId,
-        {
-          archived: true,
-        },
-      );
-
-      return {
-        success: true,
-        data: archivedGroups,
-        count,
-        message: `Retrieved ${count} archived groups for client ${clientId}`,
-      };
-    } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : 'Failed to retrieve archived groups';
-      this.logger.error(`Error retrieving archived groups: ${errorMessage}`);
-      throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-  }
 
   @Get('sessions/:sessionId/groups')
   async getSessionGroups(@Param('sessionId') sessionId: string) {
     try {
-      const [groups, count] = await this.groupService.getGroups(sessionId, {
-        archived: false,
-      });
+      const [groups, count] = await this.groupService.getGroups(sessionId, {});
 
       return {
         success: true,

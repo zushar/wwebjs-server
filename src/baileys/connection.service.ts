@@ -210,7 +210,6 @@ export class ConnectionService {
         if (update.qr) {
           // uninstall ourselves immediately
           sock.ev.off('connection.update', onRegister);
-
           // now do the async work, but don't return it
           void (async () => {
             try {
@@ -232,7 +231,6 @@ export class ConnectionService {
           })();
         }
       };
-
       sock.ev.on('connection.update', onRegister);
     }
 
@@ -242,13 +240,11 @@ export class ConnectionService {
         'connection.update',
         (update: Partial<ConnectionState>) => {
           const { connection: connectionStatus, lastDisconnect, qr } = update;
-
           this.whatsappLogger.logConnectionEvent(sessionId, 'update', {
             connectionStatus,
             hasQr: !!qr,
             hasDisconnect: !!lastDisconnect,
           });
-
           if (connectionStatus === 'open') {
             connection.status = 'connected';
             connection.reconnectAttempts = 0;
@@ -256,20 +252,16 @@ export class ConnectionService {
               timestamp: new Date().toISOString(),
             });
           }
-
           if (connectionStatus === 'close') {
             const boomErr = lastDisconnect?.error as Boom | undefined;
             const code = boomErr?.output?.statusCode;
-
             this.whatsappLogger.logError(
               sessionId,
               boomErr || 'Connection closed',
               `connection-closed code=${code}`,
             );
-
             if (code === Number(DisconnectReason.loggedOut)) {
               connection.status = 'logged-out';
-              // Remove all listeners by properly closing the connection
               connection.socket.end(undefined);
               this.whatsappLogger.logConnectionEvent(sessionId, 'logged-out', {
                 code,
@@ -383,38 +375,6 @@ export class ConnectionService {
             console.log(
               `messaging-history.set event received syncType: ${syncType} progress: ${progress} isLatest: ${isLatest}`,
             );
-            // if (progress === 100) {
-            //   const participating: Record<string, GroupMetadata> =
-            //     await connection.socket
-            //       .groupFetchAllParticipating()
-            //       .catch((error) => {
-            //         this.whatsappLogger.logError(
-            //           sessionId,
-            //           error,
-            //           'groupFetchAllParticipating',
-            //         );
-            //         return {};
-            //       });
-            //   if (participating && typeof participating === 'object') {
-            //     Object.entries(participating).forEach(([, meta]) => {
-            //       this.groupRepository
-            //         .update(
-            //           { sessionId },
-            //           {
-            //             participant:
-            //               meta.participants as unknown as proto.IGroupParticipant[],
-            //           },
-            //         )
-            //         .catch((error) => {
-            //           this.whatsappLogger.logError(
-            //             sessionId,
-            //             error,
-            //             'groupRepository.update',
-            //           );
-            //         });
-            //     });
-            //   }
-            // }
             if (Array.isArray(newChats)) {
               const groupChats = newChats.filter((chat) =>
                 chat.id.endsWith('@g.us'),
@@ -422,11 +382,6 @@ export class ConnectionService {
               const chatsToUpsert = groupChats.map((chat) => {
                 const lastMessage =
                   chat.messages?.[chat.messages.length - 1]?.message;
-                if (lastMessage?.participant) {
-                  console.log(
-                    `Processing group chat: ${chat.id} with participant: ${lastMessage.key.participant}`,
-                  );
-                }
                 return {
                   sessionId,
                   chatid: chat.id,
@@ -436,6 +391,7 @@ export class ConnectionService {
                   messageId: lastMessage?.key?.id,
                   fromMe: lastMessage?.key?.fromMe,
                   messageTimestamp: lastMessage?.messageTimestamp,
+                  asNewMessage: true,
                 };
               });
               if (chatsToUpsert.length > 0) {
@@ -482,6 +438,7 @@ export class ConnectionService {
                           fromMe: message.key.fromMe,
                           messageParticipant: message.participant,
                           messageTimestamp: message.messageTimestamp,
+                          asNewMessage: true,
                         });
                         console.log(
                           `Queued update for cached chat ${message.key.remoteJid} with new message`,
@@ -540,11 +497,6 @@ export class ConnectionService {
             const chatsToUpsert = groupChats.map((chat) => {
               const lastMessage =
                 chat.messages?.[chat.messages.length - 1]?.message;
-              if (lastMessage?.key?.participant) {
-                console.log(
-                  `Processing group chat: ${chat.id} with participant: ${lastMessage.key.participant}`,
-                );
-              }
               return {
                 sessionId,
                 chatid: chat.id,
@@ -602,7 +554,6 @@ export class ConnectionService {
             `messages.upsert event received type: ${type} requestId: ${requestId}`,
           );
           if (Array.isArray(messages)) {
-            // Fix: Add return statement to filter
             const groupMessages = messages.filter((message) => {
               return message.key.remoteJid?.endsWith('@g.us');
             });
@@ -631,6 +582,7 @@ export class ConnectionService {
                         fromMe: message.key.fromMe,
                         messageParticipant: message.key.participant,
                         messageTimestamp: message.messageTimestamp,
+                        asNewMessage: true,
                       });
                       console.log(
                         `Queued update for cached chat ${message.key.remoteJid} with new message`,
@@ -691,6 +643,7 @@ export class ConnectionService {
                     { sessionId, messageId: message.key.id },
                     {
                       messageParticipant: message.key.participant,
+                      asNewMessage: true,
                     },
                   )
                   .catch((error) => {

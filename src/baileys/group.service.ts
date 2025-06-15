@@ -38,31 +38,35 @@ export class GroupService {
     sessionId: string,
     options?: { archived?: boolean },
   ): Promise<[GroupEntity[], number]> {
-    const qb = this.chatEntityRepository
-      .createQueryBuilder('chat')
-      .where('chat.sessionId = :sessionId', { sessionId });
+    const whereClause: {
+      sessionId: string;
+      archived?: boolean;
+    } = { sessionId };
 
+    // Add archived filter if specified
     if (options?.archived !== undefined) {
-      qb.andWhere('chat.archived = :archived', { archived: options.archived });
+      whereClause.archived = options.archived;
     }
 
-    // pin first (NULLs last), then most-recent conversationTimestamp
-    qb.orderBy('chat.pinned', 'ASC', 'NULLS LAST').addOrderBy(
-      'chat.conversationTimestamp',
-      'DESC',
-    );
-
-    return qb.getManyAndCount();
+    return this.chatEntityRepository.findAndCount({
+      where: whereClause,
+    });
   }
 
   async clearMultipleGroupChats(
     sessionId: string,
     groupIds?: string[],
   ): Promise<{
-    results: { groupId: string; success: boolean; error?: string }[];
+    results: {
+      groupId: string;
+      chatName: string;
+      success: boolean;
+      error?: string;
+    }[];
   }> {
     const results: {
       groupId: string;
+      chatName: string;
       success: boolean;
       error?: string;
     }[] = [];
@@ -85,7 +89,7 @@ export class GroupService {
     if (!groupIds || groupIds.length === 0) {
       // Find all archived groups for this session
       groupsToClear = await this.chatEntityRepository.find({
-        where: { sessionId, archived: true },
+        where: { sessionId, archived: true, asNewMessage: true },
       });
       if (groupsToClear.length === 0) {
         this.logger.warn(`No archived groups found for session ${sessionId}.`);
@@ -97,6 +101,7 @@ export class GroupService {
         where: {
           sessionId,
           chatid: In(groupIds),
+          asNewMessage: true,
         },
       });
       if (groupsToClear.length === 0) {
@@ -108,19 +113,11 @@ export class GroupService {
         return { results: [] };
       }
     }
-
-    // Helper function to wait for a random time
-    const randomWait = async (minMs: number, maxMs: number) => {
-      const waitTime = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
-      this.logger.log(`Waiting for ${waitTime}ms`);
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
-    };
-
-    for (let i = 0; i < groupsToClear.length; i++) {
-      const group = groupsToClear[i];
+    let numGroups = 0;
+    for (const group of groupsToClear) {
+      numGroups++;
       console.log('--- Processing group:', group.chatid, '---');
       console.dir(group, { depth: null, colors: true });
-
       try {
         if (
           group.messageTimestamp &&
@@ -148,48 +145,53 @@ export class GroupService {
             { delete: true, lastMessages: [minimal] },
             group.chatid,
           );
-
-          // Add a small random wait between operations
-          await randomWait(500, 2000);
-
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.random() * 1000 + 500),
+          );
           await socket.chatModify(
             { archive: true, lastMessages: [minimal] },
             group.chatid,
           );
-
           this.logger.log(
             `Successfully cleared group ${group.chatid} in session ${sessionId}`,
           );
-          results.push({ groupId: group.chatid ?? 'unknown', success: true });
+          results.push({
+            groupId: group.chatid ?? 'unknown',
+            chatName: group.chatName ?? 'Unknown Group',
+            success: true,
+          });
+          await this.chatEntityRepository.update(
+            { sessionId, chatid: group.chatid },
+            { archived: true, asNewMessage: false },
+          );
         } else {
           console.warn(
             `Could not find valid last message info for group: ${group.chatid}`,
           );
           results.push({
             groupId: group.chatid ?? 'unknown',
+            chatName: group.chatName ?? 'Unknown Group',
             success: false,
             error: 'No valid last message info',
           });
         }
-
-        // Add a random wait between processing each chat
-        await randomWait(1000, 3000);
-
-        // Add a longer pause after every 30 chats
-        if ((i + 1) % 30 === 0 && i < groupsToClear.length - 1) {
-          this.logger.log(`Processed 30 chats, taking a longer break...`);
-          await randomWait(10000, 15000);
-        }
       } catch (error) {
         results.push({
           groupId: group.chatid ?? 'unknown',
+          chatName: group.chatName ?? 'Unknown Group',
           success: false,
           error: error instanceof Error ? error.message : String(error),
         });
-
-        // Still add a wait even after errors to maintain natural rhythm
-        await randomWait(1000, 3000);
       }
+      if (numGroups >= 30) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.random() * 1000 + 500),
+        );
+        numGroups = 0;
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.random() * 1000 + 500),
+      );
     }
 
     return { results };
