@@ -1,14 +1,14 @@
 // source: src/baileys/baileys.services.ts
-import { proto } from '@whiskeysockets/baileys';
+import { GroupParticipant } from '@whiskeysockets/baileys';
 import Long from 'long';
 export interface WChat {
-  sessionId: string;
-  chatid: string;
-  chatName?: string | null;
-  participant?: proto.IGroupParticipant[] | null;
-  archived?: boolean | null;
-  isReadOnly?: boolean | null;
-  messageId?: string | null;
-  fromMe?: boolean | null;
-  messageTimestamp?: number | Long | null;
+  sessionId?: string;
+  chatid?: string;
+  chatName?: string | null | undefined;
+  archived?: boolean | null | undefined;
+  messageId?: string | null | undefined;
+  participants?: GroupParticipant[] | null;
+  messageParticipant?: string | null | undefined;
+  fromMe?: boolean | null | undefined;
+  messageTimestamp?: number | Long | null | undefined;
 }

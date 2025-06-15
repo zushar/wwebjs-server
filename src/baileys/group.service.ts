@@ -1,6 +1,6 @@
 import { forwardRef, Inject, Injectable, LoggerService } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ChatModification } from '@whiskeysockets/baileys';
+import { MinimalMessage } from '@whiskeysockets/baileys';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { In, Repository } from 'typeorm';
 import { ConnectionService } from './connection.service';
@@ -109,9 +109,18 @@ export class GroupService {
       }
     }
 
-    for (const group of groupsToClear) {
+    // Helper function to wait for a random time
+    const randomWait = async (minMs: number, maxMs: number) => {
+      const waitTime = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+      this.logger.log(`Waiting for ${waitTime}ms`);
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+    };
+
+    for (let i = 0; i < groupsToClear.length; i++) {
+      const group = groupsToClear[i];
       console.log('--- Processing group:', group.chatid, '---');
       console.dir(group, { depth: null, colors: true });
+
       try {
         if (
           group.messageTimestamp &&
@@ -120,57 +129,34 @@ export class GroupService {
           group.chatid
         ) {
           // --- הדפסת המשתנים לפני השליחה ל-chatModify ---
-          const chatModifyPayload: ChatModification = {
-            delete: true,
-            lastMessages: [
-              {
-                key: {
-                  id: group.messageId,
-                  remoteJid: group.chatid,
-                  fromMe: group.fromMe,
-                },
-                messageTimestamp: group.messageTimestamp,
-              },
-            ],
+          const minimal: MinimalMessage = {
+            key: {
+              id: group.messageId,
+              remoteJid: group.chatid,
+              fromMe: group.fromMe,
+              participant: group.messageParticipant,
+            },
+            messageTimestamp: group.messageTimestamp,
           };
 
           console.log('--- Sending to chatModify: ---');
-          console.dir(chatModifyPayload, { depth: null, colors: true });
+          console.dir(minimal, { depth: null, colors: true });
           console.log('--- Target group ID:', group.chatid, '---');
           // --- סוף הדפסת המשתנים ---
 
           await socket.chatModify(
-            {
-              delete: true,
-              lastMessages: [
-                {
-                  key: {
-                    id: group.messageId,
-                    remoteJid: group.chatid,
-                    fromMe: group.fromMe,
-                  },
-                  messageTimestamp: group.messageTimestamp,
-                },
-              ],
-            },
+            { delete: true, lastMessages: [minimal] },
             group.chatid,
           );
+
+          // Add a small random wait between operations
+          await randomWait(500, 2000);
+
           await socket.chatModify(
-            {
-              archive: true,
-              lastMessages: [
-                {
-                  key: {
-                    id: group.messageId,
-                    remoteJid: group.chatid,
-                    fromMe: group.fromMe,
-                  },
-                  messageTimestamp: group.messageTimestamp,
-                },
-              ],
-            },
+            { archive: true, lastMessages: [minimal] },
             group.chatid,
           );
+
           this.logger.log(
             `Successfully cleared group ${group.chatid} in session ${sessionId}`,
           );
@@ -185,12 +171,24 @@ export class GroupService {
             error: 'No valid last message info',
           });
         }
+
+        // Add a random wait between processing each chat
+        await randomWait(1000, 3000);
+
+        // Add a longer pause after every 30 chats
+        if ((i + 1) % 30 === 0 && i < groupsToClear.length - 1) {
+          this.logger.log(`Processed 30 chats, taking a longer break...`);
+          await randomWait(10000, 15000);
+        }
       } catch (error) {
         results.push({
           groupId: group.chatid ?? 'unknown',
           success: false,
           error: error instanceof Error ? error.message : String(error),
         });
+
+        // Still add a wait even after errors to maintain natural rhythm
+        await randomWait(1000, 3000);
       }
     }
 

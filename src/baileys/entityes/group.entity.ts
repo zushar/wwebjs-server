@@ -1,4 +1,4 @@
-import { proto } from '@whiskeysockets/baileys';
+import { GroupParticipant } from '@whiskeysockets/baileys';
 import Long from 'long';
 import {
   Column,
@@ -19,24 +19,23 @@ export class GroupEntity implements WChat {
   chatid: string;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
-  chatName?: string | null;
-
-  @Column({ type: 'jsonb', nullable: true })
-  participant?: proto.IGroupParticipant[] | null;
-
-  @Column({ type: 'boolean', default: false })
-  archived?: boolean | null;
-
-  @Column({ type: 'boolean', default: false })
-  isReadOnly?: boolean | null;
+  chatName: string | null | undefined;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
-  messageId?: string | null;
+  messageParticipant: string | null | undefined;
 
-  @Column({ type: 'boolean', default: false })
-  fromMe?: boolean | null;
+  @Column({ type: 'boolean', nullable: true })
+  archived: boolean | null | undefined;
   @Column({ type: 'jsonb', nullable: true })
-  messageTimestamp?: number | Long | null;
+  participants?: GroupParticipant[] | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  messageId: string | null | undefined;
+
+  @Column({ type: 'boolean', nullable: true })
+  fromMe: boolean | null | undefined;
+  @Column({ type: 'jsonb', nullable: true })
+  messageTimestamp: number | Long | null | undefined;
   @UpdateDateColumn({ type: 'timestamp' })
   updatedAt: Date;
 }
