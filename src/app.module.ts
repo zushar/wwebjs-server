@@ -6,7 +6,6 @@ import { BaileysModule } from './baileys/baileys.module';
 import { GroupEntity } from './baileys/entityes/group.entity';
 import { LoggingModule } from './logging/logging.module';
 import { RequestLoggerMiddleware } from './logging/request-logger.middleware';
-import { WwebjsModule } from './wwebjs/wwebjs.module';
 
 @Module({
   imports: [
@@ -21,7 +20,6 @@ import { WwebjsModule } from './wwebjs/wwebjs.module';
       entities: [GroupEntity],
       synchronize: process.env.NODE_ENV !== 'production', // Auto-create tables in dev
     }),
-    WwebjsModule,
     BaileysModule,
     LoggingModule,
   ],
