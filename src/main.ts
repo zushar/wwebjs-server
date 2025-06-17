@@ -13,7 +13,7 @@ async function bootstrap() {
     logger, // replaces Nest's default console logger
   });
 
-  await app.listen(process.env.PORT || 3000);
+  await app.listen(3000, '0.0.0.0');
   logger.log(`🚀 Listening on: ${await app.getUrl()}`, 'Bootstrap');
 }
 

@@ -20,8 +20,9 @@ services:
       - "traefik.http.routers.whatsapp-cluster.rule=Host(`api.elhanan.org`)"
       - "traefik.http.routers.whatsapp-cluster.entrypoints=websecure"
       - "traefik.http.routers.whatsapp-cluster.tls.certresolver=myresolver"
+      - "traefik.http.services.whatsapp-cluster.loadbalancer.server.port=3000"
     ports:
-      - "127.0.0.1:3000:3000"
+      - "3000"
     depends_on:
       - redis
       - postgres
