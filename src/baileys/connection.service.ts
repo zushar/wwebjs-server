@@ -548,13 +548,35 @@ export class ConnectionService {
             const patch: Partial<GroupEntity> = {};
             if (typeof u.name === 'string') patch.chatName = u.name;
             if (typeof u.archived === 'boolean') patch.archived = u.archived;
-
+            const lastMessage = u.messages?.[u.messages.length - 1]?.message;
             if (Object.keys(patch).length > 0) {
-              await this.groupRepository.update(
-                { sessionId, chatid: jid },
-                patch,
-              );
-              console.log(`Applied chats.update patch to ${jid}`, patch);
+              const cachedChat = await this.groupRepository.findOne({
+                where: { sessionId, chatid: jid },
+              });
+              if (!cachedChat) {
+                await this.groupRepository.upsert(
+                  {
+                    sessionId,
+                    chatid: u.id,
+                    chatName: u.name,
+                    archived: u.archived,
+                    messageParticipant: lastMessage?.participant,
+                    messageId: lastMessage?.key?.id,
+                    fromMe: lastMessage?.key?.fromMe,
+                    messageTimestamp: lastMessage?.messageTimestamp,
+                  },
+                  ['sessionId', 'chatid'],
+                );
+                console.warn(
+                  `No cached chat found for ${jid}, skipping update`,
+                );
+              } else {
+                await this.groupRepository.update(
+                  { sessionId, chatid: jid },
+                  patch,
+                );
+                console.log(`Applied chats.update patch to ${jid}`, patch);
+              }
             }
           }
         }),
