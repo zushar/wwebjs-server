@@ -44,7 +44,7 @@ services:
     image: postgres:latest
     container_name: postgres-db
     ports:
-      - "5432:5432"  # Access PostgreSQL from localhost
+      - "127.0.0.1:5432:5432"  # Access PostgreSQL from localhost
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
