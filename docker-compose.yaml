@@ -16,7 +16,7 @@ services:
       dockerfile: Dockerfile
     container_name: whatsapp-cluster
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     develop:
       watch:
         - path: ./src
@@ -54,7 +54,14 @@ services:
     restart: always
     networks:
       - internal-net  # Same network
-
+  reverse-proxy:
+    image: traefik:v3.4
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+    ports:
+      - "80:80"  # HTTP
+      - "8080:8080"  # Traefik dashboard
 volumes:
   redis_data:
     driver: local
