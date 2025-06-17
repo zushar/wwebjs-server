@@ -269,12 +269,23 @@ export class ConnectionService {
 
               const sessionDir = path.join(this.sessionsDir, sessionId);
               if (fs.existsSync(sessionDir)) {
-                this.emptyDir(sessionDir);
-                this.whatsappLogger.logConnectionEvent(
-                  sessionId,
-                  'session-deleted',
-                  { reason: 'logged-out' },
-                );
+                try {
+                  this.emptyDir(sessionDir);
+                  fs.rmdirSync(sessionDir);
+                  this.whatsappLogger.logConnectionEvent(
+                    sessionId,
+                    'session-deleted',
+                    {
+                      reason: 'manual-logout',
+                    },
+                  );
+                } catch (err) {
+                  this.whatsappLogger.logError(
+                    sessionId,
+                    err,
+                    'delete-session-dir',
+                  );
+                }
                 this.connections.delete(sessionId);
                 this.groupRepository.delete({ sessionId }).catch((error) => {
                   this.whatsappLogger.logError(
@@ -298,12 +309,23 @@ export class ConnectionService {
 
               const sessionDir = path.join(this.sessionsDir, sessionId);
               if (fs.existsSync(sessionDir)) {
-                this.emptyDir(sessionDir);
-                this.whatsappLogger.logConnectionEvent(
-                  sessionId,
-                  'session-deleted',
-                  { reason: 'blocked' },
-                );
+                try {
+                  this.emptyDir(sessionDir);
+                  fs.rmdirSync(sessionDir);
+                  this.whatsappLogger.logConnectionEvent(
+                    sessionId,
+                    'session-deleted',
+                    {
+                      reason: 'manual-logout',
+                    },
+                  );
+                } catch (err) {
+                  this.whatsappLogger.logError(
+                    sessionId,
+                    err,
+                    'delete-session-dir',
+                  );
+                }
               }
 
               this.connections.delete(sessionId);
@@ -348,6 +370,34 @@ export class ConnectionService {
             } else {
               connection.status = 'disconnected';
               this.connections.delete(sessionId);
+              if (fs.existsSync(sessionDir)) {
+                try {
+                  this.emptyDir(sessionDir);
+                  fs.rmdirSync(sessionDir);
+                  this.whatsappLogger.logConnectionEvent(
+                    sessionId,
+                    'session-deleted',
+                    {
+                      reason: 'manual-logout',
+                    },
+                  );
+                } catch (err) {
+                  this.whatsappLogger.logError(
+                    sessionId,
+                    err,
+                    'delete-session-dir',
+                  );
+                }
+              }
+
+              this.connections.delete(sessionId);
+              this.groupRepository.delete({ sessionId }).catch((error) => {
+                this.whatsappLogger.logError(
+                  sessionId,
+                  error,
+                  'deleteGroupDataOnLogout',
+                );
+              });
               this.whatsappLogger.logConnectionEvent(
                 sessionId,
                 'max-reconnect-attempts',
@@ -757,9 +807,7 @@ export class ConnectionService {
 
   async closeConnection(sessionId: string): Promise<{ success: boolean }> {
     const connection = this.connections.get(sessionId);
-    if (!connection) {
-      throw new Error('Session not found');
-    }
+    if (!connection) throw new Error('Session not found');
 
     if (connection.socket) {
       try {
@@ -769,6 +817,20 @@ export class ConnectionService {
         });
       } catch (error) {
         this.whatsappLogger.logError(sessionId, error, 'logout');
+      }
+    }
+
+    // -- delete the session directory on disk --
+    const sessionDir = path.join(this.sessionsDir, sessionId);
+    if (fs.existsSync(sessionDir)) {
+      try {
+        this.emptyDir(sessionDir);
+        fs.rmdirSync(sessionDir);
+        this.whatsappLogger.logConnectionEvent(sessionId, 'session-deleted', {
+          reason: 'manual-logout',
+        });
+      } catch (err) {
+        this.whatsappLogger.logError(sessionId, err, 'delete-session-dir');
       }
     }
 
