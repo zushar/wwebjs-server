@@ -3,32 +3,32 @@ services:
     image: redis:latest
     container_name: redis-wwebjs
     ports:
-      - "127.0.0.1:6379:6379"  # נגיש רק ל-localhost
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     restart: always
     networks:
-      - internal-net  # רשת משותפת
+      - internal-net
 
   app:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: whatsapp-cluster
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whatsapp-cluster.rule=Host(`api.elhanan.org`)"
+      - "traefik.http.routers.whatsapp-cluster.entrypoints=websecure"
+      - "traefik.http.routers.whatsapp-cluster.tls.certresolver=myresolver"
     ports:
       - "127.0.0.1:3000:3000"
-    develop:
-      watch:
-        - path: ./src
-          target: /app/src
-          action: sync
     depends_on:
       - redis
-      - postgres  # Add dependency on PostgreSQL
+      - postgres
     environment:
-      - REDIS_HOST=redis  # חשוב: השם הזה הוא שם הקונטיינר
+      - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - DB_HOST=postgres  # PostgreSQL container name
+      - DB_HOST=postgres
       - DB_PORT=5432
       - DB_USERNAME=postgres
       - DB_PASSWORD=postgres
@@ -38,13 +38,13 @@ services:
       - ./sessions:/usr/src/app/sessions
       - ./session_logs:/usr/src/app/session_logs
     networks:
-      - internal-net  # גם כאן
+      - internal-net
 
   postgres:
     image: postgres:latest
     container_name: postgres-db
     ports:
-      - "127.0.0.1:5432:5432"  # Access PostgreSQL from localhost
+      - "127.0.0.1:5432:5432"
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
@@ -53,21 +53,35 @@ services:
       - postgres_data:/var/lib/postgresql/data
     restart: always
     networks:
-      - internal-net  # Same network
+      - internal-net
+
   reverse-proxy:
     image: traefik:v3.4
+    container_name: traefik
     command:
       - "--api.insecure=true"
-      - "--providers.docker=true"
+      - "--providers.docker"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+      - "--certificatesresolvers.myresolver.acme.email=elhanan@elhanan.org"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
     ports:
-      - "80:80"  # HTTP
-      - "8080:8080"  # Traefik dashboard
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - letsencrypt:/letsencrypt
+    networks:
+      - internal-net
+
 volumes:
   redis_data:
     driver: local
-  postgres_data:  # Volume for PostgreSQL data
+  postgres_data:
     driver: local
   whatsapp_sessions:
+    driver: local
+  letsencrypt:
     driver: local
 
 networks:
