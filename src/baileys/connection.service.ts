@@ -276,6 +276,13 @@ export class ConnectionService {
                   { reason: 'logged-out' },
                 );
                 this.connections.delete(sessionId);
+                this.groupRepository.delete({ sessionId }).catch((error) => {
+                  this.whatsappLogger.logError(
+                    sessionId,
+                    error,
+                    'deleteGroupDataOnLogout',
+                  );
+                });
                 return;
               }
             }
