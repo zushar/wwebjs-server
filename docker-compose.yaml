@@ -107,10 +107,14 @@ services:
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.elhanan.org`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls.certresolver=myresolver"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=YourAdminPassword
-    ports:
-      - "3001:3000"    # host-port 3001 → Grafana’s 3000
     volumes:
       - grafana_data:/var/lib/grafana
     depends_on:
