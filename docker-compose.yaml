@@ -35,7 +35,8 @@ services:
       - DB_DATABASE=whatsapp
     restart: always
     volumes:
-      - ./whatsapp-session:/usr/src/app/whatsapp-session
+      - ./sessions:/usr/src/app/sessions
+      - ./session_logs:/usr/src/app/session_logs
     networks:
       - internal-net  # גם כאן
 
