@@ -269,7 +269,7 @@ export class ConnectionService {
 
               const sessionDir = path.join(this.sessionsDir, sessionId);
               if (fs.existsSync(sessionDir)) {
-                fs.rmSync(sessionDir, { recursive: true, force: true });
+                this.emptyDir(sessionDir);
                 this.whatsappLogger.logConnectionEvent(
                   sessionId,
                   'session-deleted',
@@ -298,7 +298,7 @@ export class ConnectionService {
 
               const sessionDir = path.join(this.sessionsDir, sessionId);
               if (fs.existsSync(sessionDir)) {
-                fs.rmSync(sessionDir, { recursive: true, force: true });
+                this.emptyDir(sessionDir);
                 this.whatsappLogger.logConnectionEvent(
                   sessionId,
                   'session-deleted',
@@ -307,6 +307,13 @@ export class ConnectionService {
               }
 
               this.connections.delete(sessionId);
+              this.groupRepository.delete({ sessionId }).catch((error) => {
+                this.whatsappLogger.logError(
+                  sessionId,
+                  error,
+                  'deleteGroupDataOnLogout',
+                );
+              });
               return;
             }
 
@@ -834,6 +841,14 @@ export class ConnectionService {
         dump = String(err);
       }
       this.logger.error(`${context}: ${dump}`, undefined, 'ConnectionService');
+    }
+  }
+  private emptyDir(dir: string) {
+    if (!fs.existsSync(dir)) return;
+    for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name);
+      // recursive + force will delete files or directories
+      fs.rmSync(full, { recursive: true, force: true });
     }
   }
 }

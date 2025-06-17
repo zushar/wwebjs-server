@@ -115,6 +115,9 @@ services:
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=YourAdminPassword
+      - GF_SERVER_ROOT_URL=https://grafana.elhanan.org
+      - GF_SERVER_ENABLE_TRUSTED_PROXIES=0.0.0.0/0
+      - GF_COOKIE_SECURE=true
     volumes:
       - grafana_data:/var/lib/grafana
     depends_on:
@@ -126,8 +129,6 @@ volumes:
   redis_data:
     driver: local
   postgres_data:
-    driver: local
-  whatsapp_sessions:
     driver: local
   letsencrypt:
     driver: local
