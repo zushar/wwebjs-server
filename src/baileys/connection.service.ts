@@ -545,7 +545,7 @@ export class ConnectionService {
                 chatid: c.id,
                 chatName: c.name,
                 archived: c.archived,
-                messageParticipant: lastMessage?.participant,
+                messageParticipant: lastMessage?.key.participant,
                 messageId: lastMessage?.key?.id,
                 fromMe: lastMessage?.key?.fromMe,
                 messageTimestamp: lastMessage?.messageTimestamp,
@@ -577,7 +577,7 @@ export class ConnectionService {
             // Handle last message info (if present)
             const lastMessage = u.messages?.[u.messages.length - 1]?.message;
             if (lastMessage) {
-              patch.messageParticipant = lastMessage.participant;
+              patch.messageParticipant = lastMessage.key.participant;
               patch.messageId = lastMessage.key?.id;
               patch.fromMe = lastMessage.key?.fromMe;
               patch.messageTimestamp = lastMessage.messageTimestamp;
