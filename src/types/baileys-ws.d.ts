@@ -17,12 +17,13 @@ declare global {
     error?: string;
   }
 
-  export type Connection = {
-    socket: WASocket;
-    pairingCode: string | null;
-    status: string;
-    reconnectAttempts: number;
-  };
+  export interface Connection {
+  socket: WASocket
+  status: string
+  pairingCode: string | null
+  reconnectAttempts: number
+  didBootstrap?: boolean        // ← new flag
+}
 
   export interface SessionInfo {
     phoneNumber: string;
