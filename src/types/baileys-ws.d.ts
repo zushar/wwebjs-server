@@ -1,5 +1,5 @@
 // source: src/types/baileys-ws.d.ts
-/* eslint-disable prettier/prettier */
+// /* eslint-disable prettier/prettier */
 import type { WASocket, proto } from '@whiskeysockets/baileys';
 
 declare global {
@@ -18,17 +18,18 @@ declare global {
   }
 
   export interface Connection {
-  socket: WASocket
-  status: string
-  pairingCode: string | null
-  reconnectAttempts: number
-  didBootstrap?: boolean        // ← new flag
-}
+    socket: WASocket;
+    status: string;
+    pairingCode: string | null;
+    reconnectAttempts: number;
+    didBootstrap?: boolean;
+  }
 
   export interface SessionInfo {
     phoneNumber: string;
     createdAt: string;
     createdBy: string;
+    didBootstrap?: boolean;
   }
 
   export type ChatData = {
@@ -37,30 +38,29 @@ declare global {
     messages: proto.IWebMessageInfo[]; // Array of message objects for this chat
   };
   export interface ArchiveChatAction {
-  archived: boolean;
-  messageRange: Record<string, unknown>;
-}
+    archived: boolean;
+    messageRange: Record<string, unknown>;
+  }
 
-export interface SyncActionValue {
-  timestamp: string;
-  archiveChatAction?: ArchiveChatAction;
-  [key: string]: unknown;
-}
+  export interface SyncActionValue {
+    timestamp: string;
+    archiveChatAction?: ArchiveChatAction;
+    [key: string]: unknown;
+  }
 
-export interface SyncActionData {
-  index: string;
-  value?: SyncActionValue;
-  version?: number;
-  [key: string]: unknown;
-}
+  export interface SyncActionData {
+    index: string;
+    value?: SyncActionValue;
+    version?: number;
+    [key: string]: unknown;
+  }
 
-export interface SyncAction {
-  syncAction?: SyncActionData;
-  index?: string[];
-  [key: string]: unknown;
-}
+  export interface SyncAction {
+    syncAction?: SyncActionData;
+    index?: string[];
+    [key: string]: unknown;
+  }
 }
 
 // This file only declares globals
-export { };
-
+export {};

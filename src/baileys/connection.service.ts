@@ -18,7 +18,7 @@ import {
 import * as NodeCache from 'node-cache';
 import * as path from 'path';
 import { LoggerUtil } from 'src/utils/logget.util';
-import { Repository } from 'typeorm';
+import { Repository, UpdateResult } from 'typeorm';
 import { Logger as WinstonLogger } from 'winston';
 import { WhatsAppLoggerService } from '../logging/whatsapp-logger.service';
 import { GroupEntity } from './entityes/group.entity';
@@ -101,14 +101,14 @@ export class ConnectionService {
       phoneNumber: formattedNumber,
       user,
     });
-
+    const sessionInfo: SessionInfo = {
+      phoneNumber,
+      createdAt: new Date().toISOString(),
+      createdBy: user,
+      didBootstrap: false,
+    };
     if (isNewSession) {
       fs.mkdirSync(sessionDir, { recursive: true });
-      const sessionInfo: SessionInfo = {
-        phoneNumber,
-        createdAt: new Date().toISOString(),
-        createdBy: user,
-      };
       fs.writeFileSync(
         path.join(sessionDir, 'session-info.json'),
         JSON.stringify(sessionInfo, null, 2),
@@ -195,13 +195,19 @@ export class ConnectionService {
       // Initialization optimization
       fireInitQueries: true, // Get group data immediately on connect
     });
-
+    let didBootstrap = false;
+    const infoPath = path.join(sessionDir, 'session-info.json');
+    if (fs.existsSync(infoPath)) {
+      const raw = fs.readFileSync(infoPath, 'utf-8');
+      const sessionData = JSON.parse(raw) as SessionInfo;
+      didBootstrap = sessionData.didBootstrap ?? false;
+    }
     const connection: Connection = {
       socket: sock,
       pairingCode: null,
       status: 'connecting',
       reconnectAttempts: 0,
-      didBootstrap: false, // New flag to track if the session has bootstrapped
+      didBootstrap,
     };
 
     this.whatsappLogger.logConnectionEvent(sessionId, 'init', { isNewSession });
@@ -249,6 +255,8 @@ export class ConnectionService {
           });
           if (connectionStatus === 'open' && !connection.didBootstrap) {
             connection.didBootstrap = true;
+            sessionInfo.didBootstrap = true;
+            fs.writeFileSync(infoPath, JSON.stringify(sessionInfo, null, 2));
             connection.status = 'updating';
             connection.reconnectAttempts = 0;
             this.whatsappLogger.logConnectionEvent(sessionId, 'connected', {
@@ -262,6 +270,7 @@ export class ConnectionService {
                 sessionId,
                 chatid: jid,
                 chatName: meta.subject,
+                groupSize: meta.size,
                 archived: false, // Default to false, adjust as needed
                 participants: meta.participants,
               });
@@ -302,36 +311,14 @@ export class ConnectionService {
               this.whatsappLogger.logConnectionEvent(sessionId, 'logged-out', {
                 code,
               });
-
-              const sessionDir = path.join(this.sessionsDir, sessionId);
-              if (fs.existsSync(sessionDir)) {
-                try {
-                  this.emptyDir(sessionDir);
-                  fs.rmdirSync(sessionDir);
-                  this.whatsappLogger.logConnectionEvent(
-                    sessionId,
-                    'session-deleted',
-                    {
-                      reason: 'manual-logout',
-                    },
-                  );
-                } catch (err) {
-                  this.whatsappLogger.logError(
-                    sessionId,
-                    err,
-                    'delete-session-dir',
-                  );
-                }
-                this.connections.delete(sessionId);
-                this.groupRepository.delete({ sessionId }).catch((error) => {
-                  this.whatsappLogger.logError(
-                    sessionId,
-                    error,
-                    'deleteGroupDataOnLogout',
-                  );
-                });
-                return;
-              }
+              this.closeConnection(sessionId).catch((error) => {
+                this.whatsappLogger.logError(
+                  sessionId,
+                  error,
+                  'closeConnectionOnLogout',
+                );
+              });
+              return;
             }
 
             if (code === 405) {
@@ -340,36 +327,12 @@ export class ConnectionService {
               this.whatsappLogger.logConnectionEvent(sessionId, 'blocked', {
                 code,
               });
-
               connection.status = 'blocked';
-
-              const sessionDir = path.join(this.sessionsDir, sessionId);
-              if (fs.existsSync(sessionDir)) {
-                try {
-                  this.emptyDir(sessionDir);
-                  fs.rmdirSync(sessionDir);
-                  this.whatsappLogger.logConnectionEvent(
-                    sessionId,
-                    'session-deleted',
-                    {
-                      reason: 'manual-logout',
-                    },
-                  );
-                } catch (err) {
-                  this.whatsappLogger.logError(
-                    sessionId,
-                    err,
-                    'delete-session-dir',
-                  );
-                }
-              }
-
-              this.connections.delete(sessionId);
-              this.groupRepository.delete({ sessionId }).catch((error) => {
+              this.closeConnection(sessionId).catch((error) => {
                 this.whatsappLogger.logError(
                   sessionId,
                   error,
-                  'deleteGroupDataOnLogout',
+                  'closeConnectionOnBlocked',
                 );
               });
               return;
@@ -405,33 +368,11 @@ export class ConnectionService {
               }, this.reconnectInterval);
             } else {
               connection.status = 'disconnected';
-              this.connections.delete(sessionId);
-              if (fs.existsSync(sessionDir)) {
-                try {
-                  this.emptyDir(sessionDir);
-                  fs.rmdirSync(sessionDir);
-                  this.whatsappLogger.logConnectionEvent(
-                    sessionId,
-                    'session-deleted',
-                    {
-                      reason: 'manual-logout',
-                    },
-                  );
-                } catch (err) {
-                  this.whatsappLogger.logError(
-                    sessionId,
-                    err,
-                    'delete-session-dir',
-                  );
-                }
-              }
-
-              this.connections.delete(sessionId);
-              this.groupRepository.delete({ sessionId }).catch((error) => {
+              this.closeConnection(sessionId).catch((error) => {
                 this.whatsappLogger.logError(
                   sessionId,
                   error,
-                  'deleteGroupDataOnLogout',
+                  'closeConnectionOnMaxReconnectAttempts',
                 );
               });
               this.whatsappLogger.logConnectionEvent(
@@ -461,285 +402,215 @@ export class ConnectionService {
         });
       });
 
-      // // Handle messaging-history.set
-      // connection.socket.ev.on(
-      //   'messaging-history.set',
-      //   this.wrapAsyncHandler(
-      //     async ({
-      //       chats: newChats,
-      //       messages: newMessages,
-      //       syncType: syncType,
-      //       progress: progress,
-      //       isLatest: isLatest,
-      //     }) => {
-      //       console.log(
-      //         `messaging-history.set event received syncType: ${syncType} progress: ${progress} isLatest: ${isLatest}`,
-      //       );
-      //       if (Array.isArray(newChats)) {
-      //         const groupChats = newChats.filter((chat) =>
-      //           chat.id.endsWith('@g.us'),
-      //         );
-      //         const chatsToUpsert = groupChats.map((chat) => {
-      //           const lastMessage =
-      //             chat.messages?.[chat.messages.length - 1]?.message;
-      //           return {
-      //             sessionId,
-      //             chatid: chat.id,
-      //             chatName: chat.name,
-      //             archived: chat.archived,
-      //             messageParticipant: lastMessage?.participant,
-      //             messageId: lastMessage?.key?.id,
-      //             fromMe: lastMessage?.key?.fromMe,
-      //             messageTimestamp: lastMessage?.messageTimestamp,
-      //             asNewMessage: true,
-      //           };
-      //         });
-      //         if (chatsToUpsert.length > 0) {
-      //           try {
-      //             await this.groupRepository.upsert(chatsToUpsert, [
-      //               'sessionId',
-      //               'chatid',
-      //             ]);
-      //           } catch (error) {
-      //             this.logger.error(
-      //               'Failed to batch upsert group chats:',
-      //               error,
-      //             );
-      //           }
-      //         }
-      //       }
-      //       // Filter out non-group messages
-      //       if (Array.isArray(newMessages)) {
-      //         // Fix: Add return statement to filter
-      //         const groupMessages = newMessages.filter((message) => {
-      //           return message.key.remoteJid?.endsWith('@g.us');
-      //         });
-      //         const messagesToUpdate: WChat[] = [];
-      //         for (const message of groupMessages) {
-      //           try {
-      //             if (message.key.remoteJid) {
-      //               const cachedChat = await this.groupRepository.findOne({
-      //                 where: { sessionId, chatid: message.key.remoteJid },
-      //               });
-      //               if (
-      //                 cachedChat &&
-      //                 cachedChat.messageTimestamp &&
-      //                 message.messageTimestamp
-      //               ) {
-      //                 if (
-      //                   this.toNumberTimestamp(message.messageTimestamp) >=
-      //                     this.toNumberTimestamp(cachedChat.messageTimestamp) &&
-      //                   cachedChat.messageTimestamp &&
-      //                   message.messageTimestamp
-      //                 ) {
-      //                   messagesToUpdate.push({
-      //                     ...cachedChat,
-      //                     messageId: message.key.id,
-      //                     fromMe: message.key.fromMe,
-      //                     messageParticipant: message.participant,
-      //                     messageTimestamp: message.messageTimestamp,
-      //                     asNewMessage: true,
-      //                   });
-      //                   console.log(
-      //                     `Queued update for cached chat ${message.key.remoteJid} with new message`,
-      //                   );
-      //                 }
-      //               }
-      //             }
-      //           } catch (error) {
-      //             // a) print it raw
-      //             console.error(
-      //               `🛑 Failed to process group message ${message.key.id}:`,
-      //               error,
-      //             );
-      //             // b) send to Nest/Winston with real stack
-      //             this.logError(
-      //               `Failed to process group message ${message.key.id}`,
-      //               error,
-      //             );
-      //           }
-      //         }
+      // Handle messaging-history.set
+      connection.socket.ev.on(
+        'messaging-history.set',
+        this.wrapAsyncHandler(
+          async ({
+            chats: newChats,
+            messages: newMessages,
+            syncType: syncType,
+            progress: progress,
+            isLatest: isLatest,
+          }) => {
+            console.log(
+              `messaging-history.set event received syncType: ${syncType} progress: ${progress} isLatest: ${isLatest}`,
+            );
+            if (Array.isArray(newChats)) {
+              const groupChats = newChats.filter((chat) =>
+                chat.id.endsWith('@g.us'),
+              );
+              const chatsToUpsert = groupChats.map((chat) => {
+                const lastMessage =
+                  chat.messages?.[chat.messages.length - 1]?.message;
+                return {
+                  sessionId,
+                  chatid: chat.id,
+                  chatName: chat.name,
+                  archived: chat.archived,
+                  messageParticipant: lastMessage?.participant,
+                  messageId: lastMessage?.key?.id,
+                  fromMe: lastMessage?.key?.fromMe,
+                  messageTimestamp: lastMessage?.messageTimestamp,
+                  messageText: lastMessage?.message?.conversation || null,
+                  asNewMessage: true,
+                };
+              });
+              if (chatsToUpsert.length > 0) {
+                try {
+                  await this.groupRepository.upsert(chatsToUpsert, [
+                    'sessionId',
+                    'chatid',
+                  ]);
+                } catch (error) {
+                  this.logger.error(
+                    'Failed to batch upsert group chats:',
+                    error,
+                  );
+                }
+              }
+            }
+            // Filter out non-group messages
+            if (Array.isArray(newMessages)) {
+              // Fix: Add return statement to filter
+              const groupMessages = newMessages.filter((message) => {
+                return message.key.remoteJid?.endsWith('@g.us');
+              });
+              const messagesToUpdate: WChat[] = [];
+              for (const message of groupMessages) {
+                try {
+                  if (message.key.remoteJid) {
+                    const cachedChat = await this.groupRepository.findOne({
+                      where: { sessionId, chatid: message.key.remoteJid },
+                    });
+                    if (
+                      cachedChat &&
+                      cachedChat.messageTimestamp &&
+                      message.messageTimestamp
+                    ) {
+                      if (
+                        this.toNumberTimestamp(message.messageTimestamp) >=
+                          this.toNumberTimestamp(cachedChat.messageTimestamp) &&
+                        cachedChat.messageTimestamp &&
+                        message.messageTimestamp
+                      ) {
+                        messagesToUpdate.push({
+                          ...cachedChat,
+                          messageId: message.key.id,
+                          fromMe: message.key.fromMe,
+                          messageParticipant: message.participant,
+                          messageTimestamp: message.messageTimestamp,
+                          messageText: message.message?.conversation || null,
+                          asNewMessage: true,
+                        });
+                        console.log(
+                          `Queued update for cached chat ${message.key.remoteJid} with new message`,
+                        );
+                      }
+                    }
+                  }
+                } catch (error) {
+                  // a) print it raw
+                  console.error(
+                    `🛑 Failed to process group message ${message.key.id}:`,
+                    error,
+                  );
+                  // b) send to Nest/Winston with real stack
+                  this.logError(
+                    `Failed to process group message ${message.key.id}`,
+                    error,
+                  );
+                }
+              }
 
-      //         // Batch update all messages
-      //         if (messagesToUpdate.length > 0) {
-      //           try {
-      //             await this.groupRepository.upsert(messagesToUpdate, [
-      //               'sessionId',
-      //               'chatid',
-      //             ]);
-      //             console.log(
-      //               `Batch updated ${messagesToUpdate.length} group messages`,
-      //             );
-      //           } catch (error) {
-      //             this.logger.error(
-      //               'Failed to batch update group messages:',
-      //               error,
-      //             );
-      //           }
-      //         }
-      //       }
-      //     },
-      //   ),
-      // );
+              // Batch update all messages
+              if (messagesToUpdate.length > 0) {
+                try {
+                  await this.groupRepository.upsert(messagesToUpdate, [
+                    'sessionId',
+                    'chatid',
+                  ]);
+                  console.log(
+                    `Batch updated ${messagesToUpdate.length} group messages`,
+                  );
+                } catch (error) {
+                  this.logger.error(
+                    'Failed to batch update group messages:',
+                    error,
+                  );
+                }
+              }
+            }
+          },
+        ),
+      );
 
-      // // // Handle chat upserts - filter for groups only
-      // connection.socket.ev.on(
-      //   'chats.upsert',
-      //   this.wrapAsyncHandler(async (newChats) => {
-      //     console.log(
-      //       `chats.upsert event received with ${newChats.length} chats`,
-      //     );
+      // Handle chat upserts - filter for groups only
+      connection.socket.ev.on(
+        'chats.upsert',
+        this.wrapAsyncHandler(async (newChats) => {
+          const rows = newChats
+            .filter((c) => this.isGroupJid(c.id))
+            .map((c) => {
+              const lastMessage = c.messages?.[c.messages.length - 1]?.message;
+              return {
+                sessionId,
+                chatid: c.id,
+                chatName: c.name,
+                archived: c.archived,
+                messageParticipant: lastMessage?.participant,
+                messageId: lastMessage?.key?.id,
+                fromMe: lastMessage?.key?.fromMe,
+                messageTimestamp: lastMessage?.messageTimestamp,
+                messageText: lastMessage?.message?.conversation || null,
+                asNewMessage: true,
+              } as Partial<GroupEntity>;
+            });
+          if (rows.length) {
+            await this.groupRepository.upsert(rows, ['sessionId', 'chatid']);
+          }
+        }),
+      );
 
-      //     if (Array.isArray(newChats)) {
-      //       const groupChats = newChats.filter((chat) =>
-      //         chat.id.endsWith('@g.us'),
-      //       );
-      //       const chatsToUpsert = groupChats.map((chat) => {
-      //         const lastMessage =
-      //           chat.messages?.[chat.messages.length - 1]?.message;
-      //         return {
-      //           sessionId,
-      //           chatid: chat.id,
-      //           chatName: chat.name,
-      //           archived: chat.archived,
-      //           messageParticipant: lastMessage?.participant,
-      //           messageId: lastMessage?.key?.id,
-      //           fromMe: lastMessage?.key?.fromMe,
-      //           messageTimestamp: lastMessage?.messageTimestamp,
-      //         };
-      //       });
-      //       if (chatsToUpsert.length > 0) {
-      //         try {
-      //           await this.groupRepository.upsert(chatsToUpsert, [
-      //             'sessionId',
-      //             'chatid',
-      //           ]);
-      //         } catch (error) {
-      //           this.logger.error('Failed to batch upsert group chats:', error);
-      //         }
-      //       }
-      //     }
-      //   }),
-      // );
+      // Handle chat updates - filter for groups only
+      connection.socket.ev.on(
+        'chats.update',
+        this.wrapAsyncHandler(async (updates: proto.IConversation[]) => {
+          const jobs: Promise<UpdateResult>[] = [];
+          for (const u of updates) {
+            if (!this.isGroupJid(u.id)) continue;
+            const patch: Partial<GroupEntity> = {};
 
-      // // Handle chat updates - filter for groups only
-      // connection.socket.ev.on(
-      //   'chats.update',
-      //   this.wrapAsyncHandler(async (updates: proto.IConversation[]) => {
-      //     for (const u of updates) {
-      //       const jid = u.id;
-      //       if (!jid?.endsWith('@g.us')) continue;
+            if (typeof u.name === 'string') patch.chatName = u.name;
+            if (typeof u.archived === 'boolean') patch.archived = u.archived;
 
-      //       // build a partial patch only with the props that exist on `u`
-      //       const patch: Partial<GroupEntity> = {};
-      //       if (typeof u.name === 'string') patch.chatName = u.name;
-      //       if (typeof u.archived === 'boolean') patch.archived = u.archived;
-      //       const lastMessage = u.messages?.[u.messages.length - 1]?.message;
-      //       if (Object.keys(patch).length > 0) {
-      //         const cachedChat = await this.groupRepository.findOne({
-      //           where: { sessionId, chatid: jid },
-      //         });
-      //         if (!cachedChat) {
-      //           await this.groupRepository.upsert(
-      //             {
-      //               sessionId,
-      //               chatid: u.id,
-      //               chatName: u.name,
-      //               archived: u.archived,
-      //               messageParticipant: lastMessage?.participant,
-      //               messageId: lastMessage?.key?.id,
-      //               fromMe: lastMessage?.key?.fromMe,
-      //               messageTimestamp: lastMessage?.messageTimestamp,
-      //             },
-      //             ['sessionId', 'chatid'],
-      //           );
-      //           console.warn(
-      //             `No cached chat found for ${jid}, skipping update`,
-      //           );
-      //         } else {
-      //           await this.groupRepository.update(
-      //             { sessionId, chatid: jid },
-      //             patch,
-      //           );
-      //           console.log(`Applied chats.update patch to ${jid}`, patch);
-      //         }
-      //       }
-      //     }
-      //   }),
-      // );
+            // Handle last message info (if present)
+            const lastMessage = u.messages?.[u.messages.length - 1]?.message;
+            if (lastMessage) {
+              patch.messageParticipant = lastMessage.participant;
+              patch.messageId = lastMessage.key?.id;
+              patch.fromMe = lastMessage.key?.fromMe;
+              patch.messageTimestamp = lastMessage.messageTimestamp;
+              patch.messageText = lastMessage.message?.conversation || null;
+            }
 
-      // // Handle incoming message updates
-      // connection.socket.ev.on(
-      //   'messages.upsert',
-      //   this.wrapAsyncHandler(async ({ messages, type, requestId }) => {
-      //     console.log(
-      //       `messages.upsert event received type: ${type} requestId: ${requestId}`,
-      //     );
-      //     if (Array.isArray(messages)) {
-      //       const groupMessages = messages.filter((message) => {
-      //         return message.key.remoteJid?.endsWith('@g.us');
-      //       });
-      //       const messagesToUpdate: WChat[] = [];
-      //       for (const message of groupMessages) {
-      //         console.dir(message, { depth: null, colors: true });
-      //         try {
-      //           if (message.key.remoteJid) {
-      //             const cachedChat = await this.groupRepository.findOne({
-      //               where: { sessionId, chatid: message.key.remoteJid },
-      //             });
-      //             if (
-      //               cachedChat &&
-      //               cachedChat.messageTimestamp &&
-      //               message.messageTimestamp
-      //             ) {
-      //               if (
-      //                 this.toNumberTimestamp(message.messageTimestamp) >=
-      //                   this.toNumberTimestamp(cachedChat.messageTimestamp) &&
-      //                 cachedChat.messageTimestamp &&
-      //                 message.messageTimestamp
-      //               ) {
-      //                 messagesToUpdate.push({
-      //                   ...cachedChat,
-      //                   messageId: message.key.id,
-      //                   fromMe: message.key.fromMe,
-      //                   messageParticipant: message.key.participant,
-      //                   messageTimestamp: message.messageTimestamp,
-      //                   asNewMessage: true,
-      //                 });
-      //                 console.log(
-      //                   `Queued update for cached chat ${message.key.remoteJid} with new message`,
-      //                 );
-      //               }
-      //             }
-      //           }
-      //         } catch (error) {
-      //           this.logger.error(
-      //             `Failed to process group message ${message.key.id}:`,
-      //             error,
-      //           );
-      //         }
-      //       }
+            if (Object.keys(patch).length) {
+              jobs.push(
+                this.groupRepository.update({ sessionId, chatid: u.id }, patch),
+              );
+            }
+          }
+          await Promise.all(jobs);
+        }),
+      );
 
-      //       // Batch update all messages
-      //       if (messagesToUpdate.length > 0) {
-      //         try {
-      //           await this.groupRepository.upsert(messagesToUpdate, [
-      //             'sessionId',
-      //             'chatid',
-      //           ]);
-      //           console.log(
-      //             `Batch updated ${messagesToUpdate.length} group messages`,
-      //           );
-      //         } catch (error) {
-      //           this.logger.error(
-      //             'Failed to batch update group messages:',
-      //             error,
-      //           );
-      //         }
-      //       }
-      //     }
-      //   }),
-      // );
+      // Handle incoming message updates
+      connection.socket.ev.on(
+        'messages.upsert',
+        this.wrapAsyncHandler(async ({ messages, type, requestId }) => {
+          console.log(
+            `messages.upsert event received type: ${type} requestId: ${requestId}`,
+          );
+          for (const message of messages) {
+            if (!message.key.remoteJid?.endsWith('@g.us')) continue;
+            await this.groupRepository.upsert(
+              [
+                {
+                  sessionId,
+                  chatid: message.key.remoteJid,
+                  messageId: message.key.id,
+                  messageTimestamp: message.messageTimestamp,
+                  messageText: message.message?.conversation || null,
+                  fromMe: message.key.fromMe,
+                  messageParticipant: message.participant,
+                  asNewMessage: true,
+                },
+              ],
+              ['sessionId', 'chatid'],
+            );
+          }
+        }),
+      );
 
       // // Handle message updates (reactions, edits, etc.)
       // connection.socket.ev.on(
@@ -780,26 +651,26 @@ export class ConnectionService {
       //   }),
       // );
 
-      // connection.socket.ev.on(
-      //   'groups.upsert',
-      //   this.wrapAsyncHandler(async (groups: GroupMetadata[]) => {
-      //     if (!Array.isArray(groups) || groups.length === 0) return;
+      connection.socket.ev.on(
+        'groups.upsert',
+        this.wrapAsyncHandler(async (groups: GroupMetadata[]) => {
+          if (!Array.isArray(groups) || groups.length === 0) return;
 
-      //     // Prepare upsert rows for all groups
-      //     const rows = groups.map((g) => ({
-      //       sessionId,
-      //       chatid: g.id,
-      //       participant: g.participants,
-      //     }));
+          // Prepare upsert rows for all groups
+          const rows = groups.map((g) => ({
+            sessionId,
+            chatid: g.id,
+            participant: g.participants,
+          }));
 
-      //     try {
-      //       await this.groupRepository.upsert(rows, ['sessionId', 'chatid']);
-      //       console.log(`groups.upsert: upserted ${rows.length} group metas`);
-      //     } catch (err) {
-      //       this.logger.error('groups.upsert failed', err);
-      //     }
-      //   }),
-      // );
+          try {
+            await this.groupRepository.upsert(rows, ['sessionId', 'chatid']);
+            console.log(`groups.upsert: upserted ${rows.length} group metas`);
+          } catch (err) {
+            this.logger.error('groups.upsert failed', err);
+          }
+        }),
+      );
     }
 
     this.connections.set(sessionId, connection);
@@ -949,6 +820,7 @@ export class ConnectionService {
       if (typeof err === 'object' && err !== null) {
         try {
           dump = JSON.stringify(err, null, 2);
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
         } catch (_jsonError) {
           // Handle circular references or other JSON serialization errors
           dump = `[Unserializable object: ${Object.prototype.toString.call(err)}]`;
@@ -972,5 +844,9 @@ export class ConnectionService {
       // recursive + force will delete files or directories
       fs.rmSync(full, { recursive: true, force: true });
     }
+  }
+  private isGroupJid(jid?: string): boolean {
+    if (!jid) return false;
+    return jid.endsWith('@g.us') || jid.endsWith('@s.whatsapp.net');
   }
 }
