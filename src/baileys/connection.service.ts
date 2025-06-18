@@ -18,7 +18,7 @@ import {
 import * as NodeCache from 'node-cache';
 import * as path from 'path';
 import { LoggerUtil } from 'src/utils/logget.util';
-import { Repository, UpdateResult } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Logger as WinstonLogger } from 'winston';
 import { WhatsAppLoggerService } from '../logging/whatsapp-logger.service';
 import { GroupEntity } from './entityes/group.entity';
@@ -543,7 +543,7 @@ export class ConnectionService {
                 sessionId,
                 chatid: c.id,
                 chatName: c.name,
-                archived: !!c.archived,
+                archived: c.archived,
               } as Partial<GroupEntity>;
             });
           if (rows.length) {
@@ -561,26 +561,45 @@ export class ConnectionService {
           );
           for (const u of updates) {
             if (!this.isGroupJid(u.id)) continue;
+
+            // Build the upsert row with only real changes
             const row: Partial<GroupEntity> = {
               sessionId,
               chatid: u.id,
             };
-            if ('archived' in u) row.archived = !!u.archived;
-            if (typeof u.name === 'string') row.chatName = u.name;
-            const last = u.messages?.at(-1)?.message;
-            if (last) {
-              row.messageId = last.key?.id;
-              row.messageTimestamp = last.messageTimestamp;
-              row.fromMe = last.key?.fromMe;
-              row.messageParticipant = last.key?.participant;
-              row.messageText = last.message?.conversation ?? null;
+
+            // Archive/unarchive
+            if (typeof u.archived === 'boolean') {
+              row.archived = u.archived;
             }
-            console.log(
-              `Preparing update for ${row.chatid} archived=${row.archived}`,
-              row,
-            );
-            console.dir(u, { depth: null, colors: true });
-            await this.groupRepository.upsert(row, ['sessionId', 'chatid']);
+
+            // Name change
+            if (typeof u.name === 'string') {
+              row.chatName = u.name;
+            }
+
+            // Last­-message metadata (if present)
+            const last = u.messages?.at(-1)?.message;
+            if (last?.key) {
+              row.messageId = last.key.id;
+              row.fromMe = last.key.fromMe;
+              row.messageParticipant = last.key.participant;
+              row.messageTimestamp = last.messageTimestamp;
+            }
+
+            // Prune out any undefined fields to avoid accidental overwrites
+            const sanitized = Object.fromEntries(
+              Object.entries(row).filter(([, v]) => v !== undefined),
+            ) as Partial<GroupEntity>;
+
+            // Only upsert if there’s something beyond sessionId/chatid
+            if (Object.keys(sanitized).length > 2) {
+              console.log(`Upserting ${u.id} with`, sanitized);
+              await this.groupRepository.upsert(sanitized, [
+                'sessionId',
+                'chatid',
+              ]);
+            }
           }
         }),
       );
