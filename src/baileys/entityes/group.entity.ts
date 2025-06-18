@@ -38,7 +38,7 @@ export class GroupEntity implements WChat {
   fromMe?: boolean | null | undefined;
   @Column({ type: 'jsonb', nullable: true })
   messageTimestamp?: number | Long | null | undefined;
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  @Column({ type: 'text', length: 255, nullable: true })
   messageText?: string | null | undefined;
   @Column({ type: 'boolean', default: true })
   asNewMessage?: boolean;
