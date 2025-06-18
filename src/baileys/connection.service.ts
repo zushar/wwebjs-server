@@ -553,59 +553,20 @@ export class ConnectionService {
       // );
 
       // Handle chat updates - filter for groups only
-      // connection.socket.ev.on(
-      //   'chats.update',
-      //   this.wrapAsyncHandler(async (updates: proto.IConversation[]) => {
-      //     console.log(
-      //       `chats.update event received with ${updates.length} updates`,
-      //     );
-      //     for (const u of updates) {
-      //       if (!this.isGroupJid(u.id)) continue;
-
-      //       // Build the upsert row with only real changes
-      //       const row: Partial<GroupEntity> = {
-      //         sessionId,
-      //         chatid: u.id,
-      //       };
-
-      //       // Archive/unarchive
-      //       if (typeof u.archived === 'boolean') {
-      //         row.archived = u.archived;
-      //         console.log(
-      //           `Updating archive status for group ${u.id} to ${u.archived}`,
-      //         );
-      //       }
-
-      //       // Name change
-      //       if (typeof u.name === 'string') {
-      //         row.chatName = u.name;
-      //       }
-
-      //       // Last­-message metadata (if present)
-      //       const last = u.messages?.at(-1)?.message;
-      //       if (last?.key) {
-      //         row.messageId = last.key.id;
-      //         row.fromMe = last.key.fromMe;
-      //         row.messageParticipant = last.key.participant;
-      //         row.messageTimestamp = last.messageTimestamp;
-      //       }
-
-      //       // Prune out any undefined fields to avoid accidental overwrites
-      //       const sanitized = Object.fromEntries(
-      //         Object.entries(row).filter(([, v]) => v !== undefined),
-      //       ) as Partial<GroupEntity>;
-
-      //       // Only upsert if there’s something beyond sessionId/chatid
-      //       if (Object.keys(sanitized).length > 2) {
-      //         console.log(`Upserting ${u.id} with`, sanitized);
-      //         await this.groupRepository.upsert(sanitized, [
-      //           'sessionId',
-      //           'chatid',
-      //         ]);
-      //       }
-      //     }
-      //   }),
-      // );
+      connection.socket.ev.on(
+        'chats.update',
+        this.wrapAsyncHandler(async (updates: proto.IConversation[]) => {
+          console.log(
+            `chats.update event received with ${updates.length} updates`,
+          );
+          for (const u of updates) {
+            if (!this.isGroupJid(u.id)) continue;
+            console.log(
+              `Processing chat update for group ${u.id} with name: ${u.name} is archived: ${u.archived}`,
+            );
+          }
+        }),
+      );
 
       // Handle incoming message updates
       connection.socket.ev.on(
