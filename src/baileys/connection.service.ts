@@ -553,20 +553,17 @@ export class ConnectionService {
       // );
 
       // Handle chat updates - filter for groups only
-      connection.socket.ev.on(
-        'chats.update',
-        this.wrapAsyncHandler(async (updates: proto.IConversation[]) => {
-          console.log(
-            `chats.update event received with ${updates.length} updates`,
-          );
-          for (const u of updates) {
-            if (!this.isGroupJid(u.id)) continue;
-            console.log(
-              `Processing chat update for group ${u.id} with name: ${u.name} is archived: ${u.archived}`,
-            );
+      connection.socket.ev.on('chats.update', (updates) => {
+        updates.forEach((update) => {
+          if ('archived' in update) {
+            if (update.archived) {
+              console.log(`Chat archived: ${update.id} - ${update.name}`);
+            } else {
+              console.log(`Chat unarchived: ${update.id} - ${update.name}`);
+            }
           }
-        }),
-      );
+        });
+      });
 
       // Handle incoming message updates
       connection.socket.ev.on(
