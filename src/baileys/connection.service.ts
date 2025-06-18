@@ -238,7 +238,7 @@ export class ConnectionService {
       // Handle connection updates
       connection.socket.ev.on(
         'connection.update',
-        (update: Partial<ConnectionState>) => {
+        this.wrapAsyncHandler(async (update: Partial<ConnectionState>) => {
           const { connection: connectionStatus, lastDisconnect, qr } = update;
           this.whatsappLogger.logConnectionEvent(sessionId, 'update', {
             connectionStatus,
@@ -251,6 +251,25 @@ export class ConnectionService {
             this.whatsappLogger.logConnectionEvent(sessionId, 'connected', {
               timestamp: new Date().toISOString(),
             });
+            const allGroups =
+              await connection.socket.groupFetchAllParticipating();
+            for (const [jid, meta] of Object.entries(allGroups)) {
+              await this.groupRepository.upsert(
+                {
+                  sessionId,
+                  chatid: jid,
+                  chatName: meta.subject,
+                  messageParticipant: undefined,
+                  archived: false, // Default to false, adjust as needed
+                  participants: meta.participants,
+                  messageId: undefined,
+                  fromMe: undefined,
+                  messageTimestamp: undefined,
+                },
+                ['sessionId', 'chatid'],
+              );
+              this.groupCache.set(jid, meta);
+            }
           }
           if (connectionStatus === 'close') {
             const boomErr = lastDisconnect?.error as Boom | undefined;
@@ -415,7 +434,7 @@ export class ConnectionService {
               timestamp: new Date().toISOString(),
             });
           }
-        },
+        }),
       );
 
       // creds.update
@@ -833,7 +852,9 @@ export class ConnectionService {
         this.whatsappLogger.logError(sessionId, err, 'delete-session-dir');
       }
     }
-
+    await this.groupRepository.delete({ sessionId }).catch((error) => {
+      this.whatsappLogger.logError(sessionId, error, 'deleteGroupDataOnLogout');
+    });
     this.connections.delete(sessionId);
     return { success: true };
   }

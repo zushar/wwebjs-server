@@ -7,6 +7,7 @@
 # (by default in the bottom right of VS Code when viewing a .http file)
 
 @sessionId = user2
+# @sessionId = {{phoneNumber}}
 @clientId = user2
 @timestamp = {{$timestamp}}
 

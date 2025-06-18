@@ -19,25 +19,25 @@ export class GroupEntity implements WChat {
   chatid: string;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
-  chatName: string | null | undefined;
+  chatName?: string | null | undefined;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
-  messageParticipant: string | null | undefined;
+  messageParticipant?: string | null | undefined;
 
-  @Column({ type: 'boolean', nullable: true })
-  archived: boolean | null | undefined;
+  @Column({ type: 'boolean', default: false })
+  archived?: boolean | null | undefined;
   @Column({ type: 'jsonb', nullable: true })
   participants?: GroupParticipant[] | null;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
-  messageId: string | null | undefined;
+  messageId?: string | null | undefined;
 
   @Column({ type: 'boolean', nullable: true })
-  fromMe: boolean | null | undefined;
+  fromMe?: boolean | null | undefined;
   @Column({ type: 'jsonb', nullable: true })
-  messageTimestamp: number | Long | null | undefined;
+  messageTimestamp?: number | Long | null | undefined;
   @Column({ type: 'boolean', default: true })
   asNewMessage?: boolean;
   @UpdateDateColumn({ type: 'timestamp' })
-  updatedAt: Date;
+  updatedAt?: Date;
 }
