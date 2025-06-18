@@ -526,86 +526,86 @@ export class ConnectionService {
       );
 
       // Handle chat upserts - filter for groups only
-      connection.socket.ev.on(
-        'chats.upsert',
-        this.wrapAsyncHandler(async (newChats) => {
-          console.log(
-            `chats.upsert event received with ${newChats.length} chats`,
-          );
-          const rows = newChats
-            .filter((c) => this.isGroupJid(c.id))
-            .map((c) => {
-              console.log(
-                `Preparing upsert for group ${c.name} with chatid: ${c.id}`,
-              );
-              console.dir(c, { depth: null, colors: true });
-              return {
-                sessionId,
-                chatid: c.id,
-                chatName: c.name,
-                archived: c.archived,
-              } as Partial<GroupEntity>;
-            });
-          if (rows.length) {
-            await this.groupRepository.upsert(rows, ['sessionId', 'chatid']);
-          }
-        }),
-      );
+      // connection.socket.ev.on(
+      //   'chats.upsert',
+      //   this.wrapAsyncHandler(async (newChats) => {
+      //     console.log(
+      //       `chats.upsert event received with ${newChats.length} chats`,
+      //     );
+      //     const rows = newChats
+      //       .filter((c) => this.isGroupJid(c.id))
+      //       .map((c) => {
+      //         console.log(
+      //           `Preparing upsert for group ${c.name} with chatid: ${c.id}`,
+      //         );
+      //         console.dir(c, { depth: null, colors: true });
+      //         return {
+      //           sessionId,
+      //           chatid: c.id,
+      //           chatName: c.name,
+      //           archived: c.archived,
+      //         } as Partial<GroupEntity>;
+      //       });
+      //     if (rows.length) {
+      //       await this.groupRepository.upsert(rows, ['sessionId', 'chatid']);
+      //     }
+      //   }),
+      // );
 
       // Handle chat updates - filter for groups only
-      connection.socket.ev.on(
-        'chats.update',
-        this.wrapAsyncHandler(async (updates: proto.IConversation[]) => {
-          console.log(
-            `chats.update event received with ${updates.length} updates`,
-          );
-          for (const u of updates) {
-            if (!this.isGroupJid(u.id)) continue;
+      // connection.socket.ev.on(
+      //   'chats.update',
+      //   this.wrapAsyncHandler(async (updates: proto.IConversation[]) => {
+      //     console.log(
+      //       `chats.update event received with ${updates.length} updates`,
+      //     );
+      //     for (const u of updates) {
+      //       if (!this.isGroupJid(u.id)) continue;
 
-            // Build the upsert row with only real changes
-            const row: Partial<GroupEntity> = {
-              sessionId,
-              chatid: u.id,
-            };
+      //       // Build the upsert row with only real changes
+      //       const row: Partial<GroupEntity> = {
+      //         sessionId,
+      //         chatid: u.id,
+      //       };
 
-            // Archive/unarchive
-            if (typeof u.archived === 'boolean') {
-              row.archived = u.archived;
-              console.log(
-                `Updating archive status for group ${u.id} to ${u.archived}`,
-              );
-            }
+      //       // Archive/unarchive
+      //       if (typeof u.archived === 'boolean') {
+      //         row.archived = u.archived;
+      //         console.log(
+      //           `Updating archive status for group ${u.id} to ${u.archived}`,
+      //         );
+      //       }
 
-            // Name change
-            if (typeof u.name === 'string') {
-              row.chatName = u.name;
-            }
+      //       // Name change
+      //       if (typeof u.name === 'string') {
+      //         row.chatName = u.name;
+      //       }
 
-            // Last­-message metadata (if present)
-            const last = u.messages?.at(-1)?.message;
-            if (last?.key) {
-              row.messageId = last.key.id;
-              row.fromMe = last.key.fromMe;
-              row.messageParticipant = last.key.participant;
-              row.messageTimestamp = last.messageTimestamp;
-            }
+      //       // Last­-message metadata (if present)
+      //       const last = u.messages?.at(-1)?.message;
+      //       if (last?.key) {
+      //         row.messageId = last.key.id;
+      //         row.fromMe = last.key.fromMe;
+      //         row.messageParticipant = last.key.participant;
+      //         row.messageTimestamp = last.messageTimestamp;
+      //       }
 
-            // Prune out any undefined fields to avoid accidental overwrites
-            const sanitized = Object.fromEntries(
-              Object.entries(row).filter(([, v]) => v !== undefined),
-            ) as Partial<GroupEntity>;
+      //       // Prune out any undefined fields to avoid accidental overwrites
+      //       const sanitized = Object.fromEntries(
+      //         Object.entries(row).filter(([, v]) => v !== undefined),
+      //       ) as Partial<GroupEntity>;
 
-            // Only upsert if there’s something beyond sessionId/chatid
-            if (Object.keys(sanitized).length > 2) {
-              console.log(`Upserting ${u.id} with`, sanitized);
-              await this.groupRepository.upsert(sanitized, [
-                'sessionId',
-                'chatid',
-              ]);
-            }
-          }
-        }),
-      );
+      //       // Only upsert if there’s something beyond sessionId/chatid
+      //       if (Object.keys(sanitized).length > 2) {
+      //         console.log(`Upserting ${u.id} with`, sanitized);
+      //         await this.groupRepository.upsert(sanitized, [
+      //           'sessionId',
+      //           'chatid',
+      //         ]);
+      //       }
+      //     }
+      //   }),
+      // );
 
       // Handle incoming message updates
       connection.socket.ev.on(
