@@ -171,9 +171,11 @@ export class ConnectionService {
 
         // If not in cache, fetch it and store for future use
         try {
-          const metadata = await sock.groupMetadata(jid);
-          this.groupCache.set(jid, metadata);
-          return metadata;
+          const metadata = await this.groupRepository.findOne({
+            where: { sessionId, chatid: jid },
+          });
+          this.groupCache.set(jid, metadata?.participants);
+          return metadata?.participants as GroupMetadata | undefined;
         } catch (error) {
           this.whatsappLogger.logError(
             sessionId,
@@ -184,10 +186,10 @@ export class ConnectionService {
         }
       },
       // Resource optimization
-      msgRetryCounterCache: new NodeCache({
-        stdTTL: 60 * 10, // 10 minutes
-        maxKeys: 1000,
-      }),
+      // msgRetryCounterCache: new NodeCache({
+      //   stdTTL: 60 * 10, // 10 minutes
+      //   maxKeys: 1000,
+      // }),
       shouldIgnoreJid: (jid) => jid.startsWith('status@broadcast'), // Ignore status messages
       emitOwnEvents: true, // Important for tracking sent messages
       // Request rate limiting to avoid bans
@@ -557,9 +559,9 @@ export class ConnectionService {
         updates.forEach((update) => {
           if ('archived' in update) {
             if (update.archived) {
-              console.log(`Chat archived: ${update.id} - ${update.name}`);
+              console.log(`Chat archived: ${update.id} - ${update.archived}`);
             } else {
-              console.log(`Chat unarchived: ${update.id} - ${update.name}`);
+              console.log(`Chat unarchived: ${update.id} - ${update.archived}`);
             }
           }
         });
