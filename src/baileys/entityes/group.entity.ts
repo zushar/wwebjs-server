@@ -20,7 +20,7 @@ export class GroupEntity implements WChat {
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   chatName?: string | null | undefined;
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'int', nullable: true })
   groupSize?: number;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
