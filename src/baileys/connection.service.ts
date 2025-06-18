@@ -571,6 +571,9 @@ export class ConnectionService {
             // Archive/unarchive
             if (typeof u.archived === 'boolean') {
               row.archived = u.archived;
+              console.log(
+                `Updating archive status for group ${u.id} to ${u.archived}`,
+              );
             }
 
             // Name change
@@ -631,8 +634,6 @@ export class ConnectionService {
           }
         }),
       );
-
-      // // Handle message updates (reactions, edits, etc.)
       // connection.socket.ev.on(
       //   'messages.update',
       //   this.wrapAsyncHandler(async (newMessages) => {
