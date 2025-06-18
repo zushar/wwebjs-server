@@ -536,6 +536,10 @@ export class ConnectionService {
             .filter((c) => this.isGroupJid(c.id))
             .map((c) => {
               const lastMessage = c.messages?.[c.messages.length - 1]?.message;
+              console.log(
+                `Preparing upsert for group ${c.name} with chatid: ${c.id}`,
+              );
+              console.dir(c, { depth: null, colors: true });
               return {
                 sessionId,
                 chatid: c.id,
@@ -573,19 +577,24 @@ export class ConnectionService {
             // Handle last message info (if present)
             const lastMessage = u.messages?.[u.messages.length - 1]?.message;
             if (lastMessage) {
-              patch.chatName = u.name || patch.chatName;
-              patch.archived = u.archived;
               patch.messageParticipant = lastMessage.participant;
               patch.messageId = lastMessage.key?.id;
               patch.fromMe = lastMessage.key?.fromMe;
               patch.messageTimestamp = lastMessage.messageTimestamp;
               patch.messageText = lastMessage.message?.conversation || null;
+            } else {
+              patch.archived = u.archived;
+              patch.chatName = u.name || patch.chatName;
             }
             console.log(
-              `Preparing update for group ${u.id} with patch:`,
+              `Preparing update for group ${u.name} with patch:`,
               patch,
             );
+            console.dir(u, { depth: null, colors: true });
             if (Object.keys(patch).length) {
+              if (!patch.archived) {
+                console.log(`Updating group ${u.name} with patch:`, patch);
+              }
               jobs.push(
                 this.groupRepository.update({ sessionId, chatid: u.id }, patch),
               );
@@ -665,6 +674,9 @@ export class ConnectionService {
       connection.socket.ev.on(
         'groups.upsert',
         this.wrapAsyncHandler(async (groups: GroupMetadata[]) => {
+          console.log(
+            `groups.upsert event received with ${groups.length} groups`,
+          );
           if (!Array.isArray(groups) || groups.length === 0) return;
 
           // Prepare upsert rows for all groups
