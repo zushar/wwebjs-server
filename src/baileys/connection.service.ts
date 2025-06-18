@@ -535,7 +535,6 @@ export class ConnectionService {
           const rows = newChats
             .filter((c) => this.isGroupJid(c.id))
             .map((c) => {
-              const lastMessage = c.messages?.[c.messages.length - 1]?.message;
               console.log(
                 `Preparing upsert for group ${c.name} with chatid: ${c.id}`,
               );
@@ -544,13 +543,7 @@ export class ConnectionService {
                 sessionId,
                 chatid: c.id,
                 chatName: c.name,
-                archived: c.archived,
-                messageParticipant: lastMessage?.key.participant,
-                messageId: lastMessage?.key?.id,
-                fromMe: lastMessage?.key?.fromMe,
-                messageTimestamp: lastMessage?.messageTimestamp,
-                messageText: lastMessage?.message?.conversation || null,
-                asNewMessage: true,
+                archived: !!c.archived,
               } as Partial<GroupEntity>;
             });
           if (rows.length) {
@@ -566,41 +559,29 @@ export class ConnectionService {
           console.log(
             `chats.update event received with ${updates.length} updates`,
           );
-          const jobs: Promise<UpdateResult>[] = [];
           for (const u of updates) {
             if (!this.isGroupJid(u.id)) continue;
-            const patch: Partial<GroupEntity> = {};
-
-            if (typeof u.name === 'string') patch.chatName = u.name;
-            if (typeof u.archived === 'boolean') patch.archived = u.archived;
-
-            // Handle last message info (if present)
-            const lastMessage = u.messages?.[u.messages.length - 1]?.message;
-            if (lastMessage) {
-              patch.messageParticipant = lastMessage.key.participant;
-              patch.messageId = lastMessage.key?.id;
-              patch.fromMe = lastMessage.key?.fromMe;
-              patch.messageTimestamp = lastMessage.messageTimestamp;
-              patch.messageText = lastMessage.message?.conversation || null;
-            } else {
-              patch.archived = u.archived;
-              patch.chatName = u.name || patch.chatName;
+            const row: Partial<GroupEntity> = {
+              sessionId,
+              chatid: u.id,
+            };
+            if ('archived' in u) row.archived = !!u.archived;
+            if (typeof u.name === 'string') row.chatName = u.name;
+            const last = u.messages?.at(-1)?.message;
+            if (last) {
+              row.messageId = last.key?.id;
+              row.messageTimestamp = last.messageTimestamp;
+              row.fromMe = last.key?.fromMe;
+              row.messageParticipant = last.key?.participant;
+              row.messageText = last.message?.conversation ?? null;
             }
             console.log(
-              `Preparing update for group ${u.name} with patch:`,
-              patch,
+              `Preparing update for ${row.chatid} archived=${row.archived}`,
+              row,
             );
             console.dir(u, { depth: null, colors: true });
-            if (Object.keys(patch).length) {
-              if (!patch.archived) {
-                console.log(`Updating group ${u.name} with patch:`, patch);
-              }
-              jobs.push(
-                this.groupRepository.update({ sessionId, chatid: u.id }, patch),
-              );
-            }
+            await this.groupRepository.upsert(row, ['sessionId', 'chatid']);
           }
-          await Promise.all(jobs);
         }),
       );
 
@@ -871,7 +852,6 @@ export class ConnectionService {
     }
   }
   private isGroupJid(jid?: string): boolean {
-    if (!jid) return false;
-    return jid.endsWith('@g.us') || jid.endsWith('@s.whatsapp.net');
+    return !!jid && jid.endsWith('@g.us');
   }
 }
