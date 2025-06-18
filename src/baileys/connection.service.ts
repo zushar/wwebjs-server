@@ -529,6 +529,9 @@ export class ConnectionService {
       connection.socket.ev.on(
         'chats.upsert',
         this.wrapAsyncHandler(async (newChats) => {
+          console.log(
+            `chats.upsert event received with ${newChats.length} chats`,
+          );
           const rows = newChats
             .filter((c) => this.isGroupJid(c.id))
             .map((c) => {
@@ -556,6 +559,9 @@ export class ConnectionService {
       connection.socket.ev.on(
         'chats.update',
         this.wrapAsyncHandler(async (updates: proto.IConversation[]) => {
+          console.log(
+            `chats.update event received with ${updates.length} updates`,
+          );
           const jobs: Promise<UpdateResult>[] = [];
           for (const u of updates) {
             if (!this.isGroupJid(u.id)) continue;
@@ -567,13 +573,18 @@ export class ConnectionService {
             // Handle last message info (if present)
             const lastMessage = u.messages?.[u.messages.length - 1]?.message;
             if (lastMessage) {
+              patch.chatName = u.name || patch.chatName;
+              patch.archived = u.archived;
               patch.messageParticipant = lastMessage.participant;
               patch.messageId = lastMessage.key?.id;
               patch.fromMe = lastMessage.key?.fromMe;
               patch.messageTimestamp = lastMessage.messageTimestamp;
               patch.messageText = lastMessage.message?.conversation || null;
             }
-
+            console.log(
+              `Preparing update for group ${u.id} with patch:`,
+              patch,
+            );
             if (Object.keys(patch).length) {
               jobs.push(
                 this.groupRepository.update({ sessionId, chatid: u.id }, patch),
@@ -660,7 +671,9 @@ export class ConnectionService {
           const rows = groups.map((g) => ({
             sessionId,
             chatid: g.id,
-            participant: g.participants,
+            chatName: g.subject,
+            groupSize: g.size,
+            participants: g.participants,
           }));
 
           try {
