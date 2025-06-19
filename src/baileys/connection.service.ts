@@ -11,12 +11,13 @@ import makeWASocket, {
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 import * as fs from 'fs';
+import Redis from 'ioredis';
 import {
   WINSTON_MODULE_NEST_PROVIDER,
   WINSTON_MODULE_PROVIDER,
 } from 'nest-winston';
-import * as NodeCache from 'node-cache';
 import * as path from 'path';
+import { REDIS_CLIENT } from 'src/redis/redis.module';
 import { LoggerUtil } from 'src/utils/logget.util';
 import { Repository } from 'typeorm';
 import { Logger as WinstonLogger } from 'winston';
@@ -33,12 +34,6 @@ export class ConnectionService {
   private readonly sessionsDir: string;
   private readonly maxReconnectAttempts = 5;
   private readonly reconnectInterval = 5000;
-  private groupCache = new NodeCache({
-    stdTTL: 3600,
-    maxKeys: 1000,
-    checkperiod: 120,
-    useClones: false,
-  });
   private readonly sessionLogsDir: string;
 
   constructor(
@@ -53,6 +48,8 @@ export class ConnectionService {
     public readonly messageService: MessageService,
     @InjectRepository(GroupEntity)
     private groupRepository: Repository<GroupEntity>,
+    @Inject(REDIS_CLIENT)
+    private readonly redisClient: Redis,
   ) {
     const cwd = process.cwd();
     if (!cwd) {
@@ -122,14 +119,14 @@ export class ConnectionService {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, baileyLogger),
       },
-      browser: Browsers.windows('chrome'),
+      browser: Browsers.windows('Desktop'),
       mobile: false,
       printQRInTerminal: false, // Server environment doesn't need terminal QR
       connectTimeoutMs: 60000, // 60 second connection timeout
       defaultQueryTimeoutMs: 30000, // 30 second query timeout
       logger: baileyLogger,
       markOnlineOnConnect: true, // Show as online when connected
-      syncFullHistory: false, // Limits initial history download
+      syncFullHistory: true, // Limits initial history download
       keepAliveIntervalMs: 30000, // 30 seconds keep-alive
       // getMessage: async (key) => {
       //   if (!key.remoteJid || !key.id) {
@@ -156,31 +153,20 @@ export class ConnectionService {
       //   }
       // },
       cachedGroupMetadata: async (jid): Promise<GroupMetadata | undefined> => {
-        // Try to get from cache first
-        const cached = this.groupCache.get(jid);
-        if (
-          cached &&
-          typeof cached === 'object' &&
-          cached !== null &&
-          'id' in cached &&
-          'subject' in cached &&
-          'participants' in cached
-        ) {
-          return cached as GroupMetadata;
-        }
-
-        // If not in cache, fetch it and store for future use
         try {
-          const metadata = await this.groupRepository.findOne({
-            where: { sessionId, chatid: jid },
-          });
-          this.groupCache.set(jid, metadata?.participants);
-          return metadata?.participants as GroupMetadata | undefined;
+          const raw = await this.redisClient.get(jid);
+          if (raw) {
+            const meta = JSON.parse(raw) as GroupMetadata;
+            return meta;
+          }
+          const meta = await sock.groupMetadata(jid);
+          await this.redisClient.set(jid, JSON.stringify(meta), 'EX', 3600);
+          return meta;
         } catch (error) {
           this.whatsappLogger.logError(
             sessionId,
             error,
-            `fetchGroupMetadata for ${jid}`,
+            `cachedGroupMetadata for ${jid}`,
           );
           return undefined;
         }
@@ -268,15 +254,14 @@ export class ConnectionService {
               await connection.socket.groupFetchAllParticipating();
             const rows: Partial<GroupEntity>[] = [];
             for (const [jid, meta] of Object.entries(allGroups)) {
+              await this.redisClient.set(jid, JSON.stringify(meta), 'EX', 3600);
               rows.push({
                 sessionId,
                 chatid: jid,
                 chatName: meta.subject,
                 groupSize: meta.size,
-                archived: false, // Default to false, adjust as needed
-                participants: meta.participants,
+                archived: false,
               });
-              this.groupCache.set(jid, meta);
             }
             if (rows.length) {
               try {

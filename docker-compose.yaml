@@ -103,6 +103,13 @@ services:
     restart: always
     networks:
       - internal-net
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-exporter
+    command: --redis.addr=redis:6379  
+    restart: always
+    networks:
+      - internal-net
 
   grafana:
     image: grafana/grafana:latest
