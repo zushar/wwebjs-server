@@ -26,6 +26,7 @@ services:
     depends_on:
       - redis
       - postgres
+      - mongo
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -34,6 +35,7 @@ services:
       - DB_USERNAME=postgres
       - DB_PASSWORD=postgres
       - DB_DATABASE=whatsapp
+      - MONGO_URI=mongodb://root:example@mongo-db:27017/whatsapp?authSource=admin
     restart: always
     volumes:
       - ./sessions:/usr/src/app/sessions
@@ -131,7 +133,42 @@ services:
       - prometheus
     networks:
       - internal-net
-
+  mongo:
+    image: mongo:latest
+    container_name: mongo-db
+    restart: always
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=example
+    volumes:
+      - ./mongo_data:/data/db
+    networks:
+      - internal-net
+  mongo-express:
+    image: mongo-express:1.0
+    container_name: mongo-express
+    restart: always
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: root
+      ME_CONFIG_MONGODB_ADMINPASSWORD: example
+      ME_CONFIG_MONGODB_URL: mongodb://root:example@mongo-db:27017/
+      ME_CONFIG_BASICAUTH: false
+    networks:
+      - internal-net
+  mongodb-exporter:
+    image: bitnami/mongodb-exporter:latest
+    container_name: mongodb-exporter
+    depends_on:
+      - mongo
+    environment:
+      - MONGODB_URI=mongodb://root:example@mongo-db:27017
+    ports:
+      - "9216:9216"
+    restart: always
+    networks:
+      - internal-net
 volumes:
   redis_data:
     driver: local
@@ -141,7 +178,8 @@ volumes:
     driver: local
   grafana_data:
     driver: local
-
+  mongo_data:
+    driver: local
 networks:
   internal-net:
     driver: bridge

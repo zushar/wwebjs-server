@@ -7,7 +7,6 @@ import makeWASocket, {
   DisconnectReason,
   GroupMetadata,
   makeCacheableSignalKeyStore,
-  proto,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 import * as fs from 'fs';
@@ -17,6 +16,7 @@ import {
   WINSTON_MODULE_PROVIDER,
 } from 'nest-winston';
 import * as path from 'path';
+import { BaileysAuthStateService } from 'src/mongoDB/baileys-auth-state.service';
 import { REDIS_CLIENT } from 'src/redis/redis.module';
 import { LoggerUtil } from 'src/utils/logget.util';
 import { Repository } from 'typeorm';
@@ -50,6 +50,7 @@ export class ConnectionService {
     private groupRepository: Repository<GroupEntity>,
     @Inject(REDIS_CLIENT)
     private readonly redisClient: Redis,
+    private readonly authStateService: BaileysAuthStateService,
   ) {
     const cwd = process.cwd();
     if (!cwd) {
@@ -121,13 +122,19 @@ export class ConnectionService {
       },
       browser: Browsers.windows('Desktop'),
       mobile: false,
-      printQRInTerminal: false, // Server environment doesn't need terminal QR
       connectTimeoutMs: 60000, // 60 second connection timeout
       defaultQueryTimeoutMs: 30000, // 30 second query timeout
       logger: baileyLogger,
       markOnlineOnConnect: true, // Show as online when connected
       syncFullHistory: true, // Limits initial history download
       keepAliveIntervalMs: 30000, // 30 seconds keep-alive
+      maxMsgRetryCount: 0, // Disable automatic retries
+      shouldIgnoreJid: (jid) => jid.startsWith('status@broadcast'), // Ignore status messages
+      emitOwnEvents: true, // Important for tracking sent messages
+      appStateMacVerification: {
+        patch: true, // Enable patching for app state MAC verification
+        snapshot: true, // Enable snapshot for app state MAC verification
+      },
       // getMessage: async (key) => {
       //   if (!key.remoteJid || !key.id) {
       //     return undefined;
@@ -140,6 +147,7 @@ export class ConnectionService {
       //       key.remoteJid,
       //       key.id,
       //       key.fromMe === null ? undefined : key.fromMe,
+      //       key.participant,
       //     );
 
       //     return message || undefined;
@@ -171,17 +179,8 @@ export class ConnectionService {
           return undefined;
         }
       },
-      // Resource optimization
-      // msgRetryCounterCache: new NodeCache({
-      //   stdTTL: 60 * 10, // 10 minutes
-      //   maxKeys: 1000,
-      // }),
-      shouldIgnoreJid: (jid) => jid.startsWith('status@broadcast'), // Ignore status messages
-      emitOwnEvents: true, // Important for tracking sent messages
       // Request rate limiting to avoid bans
-      retryRequestDelayMs: 3000, // 3 second base delay between retries
-      // Initialization optimization
-      fireInitQueries: true, // Get group data immediately on connect
+      // retryRequestDelayMs: 3000,
     });
     let didBootstrap = false;
     const infoPath = path.join(sessionDir, 'session-info.json');

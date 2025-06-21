@@ -1,4 +1,3 @@
-import { GroupParticipant } from '@whiskeysockets/baileys';
 import Long from 'long';
 import {
   Column,
@@ -28,8 +27,6 @@ export class GroupEntity implements WChat {
 
   @Column({ type: 'boolean', default: false })
   archived?: boolean | null | undefined;
-  @Column({ type: 'jsonb', nullable: true })
-  participants?: GroupParticipant[] | null;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   messageId?: string | null | undefined;
